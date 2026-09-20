@@ -60,7 +60,7 @@
         "default": [
           "load"
         ],
-        "description": "Apple Home reportedly shows watts on outlet tiles. Adding overlapping raw meters can distort its energy totals. Other meters use ElectricalSensor, whose Home UI support is unverified."
+        "description": "Standard read-only HAP outlets. Power uses a custom characteristic and may not be displayed by Apple Home."
       },
       "nativeEnergyMeters": {
         "type": "array",
@@ -76,7 +76,7 @@
           ]
         },
         "default": [],
-        "description": "Enable only after confirming these meters report real cumulative Wh; some backends return placeholder zeroes."
+        "description": "Verified gateway Wh counters, exposed as custom HAP kWh characteristics. Apple Home may not display them."
       },
       "batteryStatus": {
         "type": "boolean",
@@ -151,7 +151,7 @@
           "directional"
         ],
         "default": "home-consumption",
-        "description": "Recommended: only Home Consumption contributes power to Apple Home. Compact and directional expose overlapping meters and will distort totals. The recommended profile overrides the meters selection."
+        "description": "Home-consumption exposes only load. Compact/directional expose overlapping raw meters through custom HAP characteristics; Apple Home may not display them."
       },
       "thresholdSensors": {
         "type": "boolean",

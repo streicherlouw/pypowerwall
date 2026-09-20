@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Raw Powerwall meter validation and Matter unit conversion.
+ * Raw Powerwall meter validation and internal integer unit conversion.
  * Author: Jason A. Cox
  * https://github.com/jasonacox/pypowerwall
  * Functions: meterReading, energyReading, stateOfCharge.
@@ -35,7 +35,7 @@ function energyReading(payload, channel) {
     ['energy_exported', 'cumulativeEnergyExported'],
   ]) {
     const value = data?.[source];
-    const energy = Math.round(value * 1000); // Gateway Wh -> Matter mWh.
+    const energy = Math.round(value * 1000); // Gateway Wh -> internal mWh; the HAP transport publishes kWh.
     result[target] = finite(value) && value >= 0 && Number.isSafeInteger(energy) ? { energy } : null;
   }
   return result;

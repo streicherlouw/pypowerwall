@@ -1,12 +1,11 @@
 {
   "name": "homebridge-powerwall-meters",
-  "version": "0.2.13",
-  "description": "Powerwall meters and optional controls over Homebridge Matter using pypowerwall",
+  "version": "0.3.0",
+  "description": "Powerwall meters, battery status and controls over HomeKit HAP using pypowerwall",
   "main": "src/index.js",
   "license": "MIT",
   "keywords": [
     "homebridge-plugin",
-    "supports-matter",
     "powerwall",
     "energy"
   ],
@@ -16,7 +15,7 @@
   },
   "scripts": {
     "test": "node --test",
-    "check": "node --check src/index.js && node --check src/client.js && node --check src/meters.js"
+    "check": "node --check src/index.js && node --check src/client.js && node --check src/meters.js && node --check src/hap.js"
   },
   "files": [
     "src",

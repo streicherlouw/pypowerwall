@@ -11,7 +11,7 @@ function setup(options = {}, types = { ElectricalSensor: 'meter', OnOffOutlet: '
       .replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5') } },
     on: (event, callback) => { events[event] = callback; },
     versionGreaterOrEqual: () => true,
-    matter: {
+    transport: {
       deviceTypes: types,
       registerPlatformAccessories: async (_, __, accessories) => registered.push(...accessories),
       unregisterPlatformAccessories: async (_, __, accessories) => removed.push(...accessories),
@@ -19,7 +19,7 @@ function setup(options = {}, types = { ElectricalSensor: 'meter', OnOffOutlet: '
     },
   };
   const config = { meterProfile: 'compact', thresholdSensors: false, siteId: 'test-site', proxyUrl: 'http://localhost', ...options };
-  const p = new PowerwallMeters({ info() {}, warn() {}, error() {} }, config, api);
+  const p = new PowerwallMeters({ info() {}, warn() {}, error() {} }, config, api, api.transport);
   const aggregates = Object.fromEntries(['site', 'battery', 'load', 'solar'].map(key => [key, {
     instant_power: key === 'battery' ? -1000 : 2000, last_communication_time: new Date().toISOString(),
   }]));
@@ -91,21 +91,18 @@ test('restore uses stable UUIDs, removes deselected accessories and restores han
   const old = setup();
   await old.p.start();
   const current = setup({ meters: ['load'], batteryStatus: false });
-  for (const accessory of old.registered) current.p.configureMatterAccessory(accessory);
+  for (const accessory of old.registered) current.p.configureAccessory(accessory);
   await current.p.start();
   assert.equal(current.registered[0].UUID, old.registered[0].UUID);
   assert.equal(current.removed.length, 4);
   assert.throws(current.registered[0].handlers.onOff.off, /Read-only/);
 });
 
-test('misconfiguration and missing Matter fail explicitly', async () => {
+test('misconfiguration and unauthenticated controls fail explicitly', async () => {
   for (const config of [{ pollSeconds: 0 }, { meters: ['unknown'] }, { exportOffPolicy: 'battery_ok' },
     { allowBatteryExportSwitch: 'false' }]) {
     assert.throws(() => validate({ siteId: 'test', proxyUrl: 'http://localhost', ...config }));
   }
-  const { p, api } = setup();
-  api.matter = undefined;
-  await assert.rejects(p.start(), /Matter enabled/);
   const control = setup({ gridChargingSwitch: true });
   await assert.rejects(control.p.start(), /controlTokenEnv/);
 });
@@ -114,7 +111,7 @@ test('enabling native energy replaces a cached endpoint to rebuild its features'
   const old = setup({ meters: ['site'], batteryStatus: false });
   await old.p.start();
   const next = setup({ meters: ['site'], batteryStatus: false, nativeEnergyMeters: ['site'] });
-  next.p.configureMatterAccessory(old.registered[0]);
+  next.p.configureAccessory(old.registered[0]);
   await next.p.start();
   assert.notEqual(next.registered[0].UUID, old.registered[0].UUID);
   assert.equal(next.removed.length, 1);
@@ -122,27 +119,7 @@ test('enabling native energy replaces a cached endpoint to rebuild its features'
     { cumulativeEnergyImported: null, cumulativeEnergyExported: null });
 });
 
-test('real Homebridge 2.4 composes measurement and rechargeable battery behaviors', async () => {
-  // Exercise real released type/feature builders, without starting a Matter
-  // server, advertising on the network, or commissioning the user's Home.
-  const { deviceTypes } = await import('../node_modules/homebridge/dist/matter/types.js');
-  const { AccessoryManager } = await import('../node_modules/homebridge/dist/matter/server/AccessoryManager.js');
-  const { validateAccessoryRequiredFields } = await import('../node_modules/homebridge/dist/matter/serverHelpers.js');
-  const { p, registered } = setup({ nativeEnergyMeters: ['site'] }, deviceTypes);
-  await p.start();
-  const manager = new AccessoryManager();
-  for (const accessory of registered) {
-    validateAccessoryRequiredFields(accessory);
-    const prepared = await manager.prepareDeviceType(accessory);
-    const deviceType = prepared.deviceType ?? prepared;
-    assert.ok(deviceType.behaviors);
-    if (accessory.clusters.electricalPowerMeasurement) assert.ok(deviceType.behaviors.electricalPowerMeasurement);
-    if (accessory.clusters.electricalEnergyMeasurement) assert.ok(deviceType.behaviors.electricalEnergyMeasurement);
-    if (accessory.clusters.powerSource) assert.ok(deviceType.behaviors.powerSource);
-  }
-});
-
-test('Matter identity fields fit protocol limits with real UUID format and multibyte names', async () => {
+test('Accessory identity fields fit protocol limits with real UUID format and multibyte names', async () => {
   const { p, registered } = setup({ name: '🔋'.repeat(20) });
   await p.start();
   for (const a of registered) {
@@ -246,7 +223,7 @@ test('choice controls confirm state, reject deselection, honor authority and nev
   clearTimeout(p.refreshTimer);
 });
 
-test('commands do not wait for a poll holding a pending Matter state update', async () => {
+test('commands do not wait for a poll holding a pending telemetry state update', async () => {
   const { p } = setup({ energyExportSwitches: true, controlAuthority: 'homebridge' });
   p.client.token = 'test';
   p.client.readState = async () => ({ supported: true, controls_enabled: true, grid_export: 'pv_only' });

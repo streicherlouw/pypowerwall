@@ -1,12 +1,13 @@
 'use strict';
 
 /**
- * Powerwall meter and policy platform for Homebridge Matter.
+ * Powerwall meter and policy platform for Homebridge HAP.
  * Author: Jason A. Cox
  * https://github.com/jasonacox/pypowerwall
  * Features: raw meter reporting, battery status, opt-in policy controls.
  */
 
+const { HapTransport } = require('./hap');
 const { ProxyClient } = require('./client');
 const { CHANNELS, LABELS, finite, meterReading, energyReading, stateOfCharge } = require('./meters');
 const PLUGIN = 'homebridge-powerwall-meters';
@@ -30,7 +31,7 @@ function thresholdValue(value, direction) {
   return value;
 }
 
-function matterLabel(value) {
+function accessoryLabel(value) {
   let label = '';
   for (const character of value) {
     if (Buffer.byteLength(label + character, 'utf8') > 32) break;
@@ -70,11 +71,12 @@ function validate(config) {
 }
 
 class PowerwallMeters {
-  constructor(log, config, api) {
+  constructor(log, config, api, transport) {
     validate(config);
     this.log = log;
     this.config = config;
     this.api = api;
+    this.transport = transport ?? new HapTransport(api);
     this.client = new ProxyClient(config);
     this.cached = new Map();
     this.accessories = new Map();
@@ -93,12 +95,14 @@ class PowerwallMeters {
     this.choices = [];
     this.pollMs = (config.pollSeconds ?? 15) * 1000;
     this.staleMs = (config.staleSeconds ?? 90) * 1000;
-    api.on('didFinishLaunching', () => this.start().catch(error => log.error(`Powerwall Matter startup failed: ${error.message}`)));
+    api.on('didFinishLaunching', () => this.start().catch(error => log.error(`Powerwall HAP startup failed: ${error.message}`)));
     api.on('shutdown', () => { this.stopped = true; clearTimeout(this.timer); clearTimeout(this.refreshTimer); });
   }
 
-  configureAccessory() {} // This platform deliberately publishes only Matter.
-  configureMatterAccessory(accessory) { this.cached.set(accessory.UUID, accessory); }
+  configureAccessory(accessory) {
+    this.cached.set(accessory.UUID, accessory);
+    this.transport.restore?.(accessory);
+  }
 
   meterKey(channel) {
     // Homebridge restores an endpoint's feature set. Changing the energy
@@ -115,8 +119,8 @@ class PowerwallMeters {
   accessory(key, name, deviceType, clusters, handlers) {
     const UUID = this.api.hap.uuid.generate(`${PLUGIN}:${this.config.siteId}:${key}`);
     const accessory = {
-      UUID, displayName: matterLabel(name || 'Battery'), deviceType,
-      // Matter limits serialNumber to 32 characters; a hyphenated HAP UUID is 36.
+      UUID, displayName: accessoryLabel(name || 'Battery'), deviceType,
+      // Keep the existing stable compact serial number across protocol versions.
       manufacturer: 'pypowerwall', model: 'Powerwall proxy', serialNumber: UUID.replace(/-/g, ''),
       context: { key }, clusters, handlers,
     };
@@ -125,17 +129,14 @@ class PowerwallMeters {
   }
 
   async start() {
-    const matter = this.api.matter;
-    if (!matter || !this.api.versionGreaterOrEqual('2.4.0') || !matter.deviceTypes.ElectricalSensor) {
-      throw new Error('Homebridge 2.4+ with Matter enabled is required');
-    }
+    const transport = this.transport;
     for (const channel of this.channels) {
       if (this.config.meterProfile === 'directional' && DIRECTIONS[channel]) {
         for (const [key, label] of DIRECTIONS[channel]) {
           const outlet = this.outlets.has(channel);
           const readOnly = () => { throw new Error('Read-only Powerwall meter'); };
           this.accessory(key + (outlet ? '-outlet' : '-sensor'), label,
-            outlet ? matter.deviceTypes.OnOffOutlet : matter.deviceTypes.ElectricalSensor,
+            outlet ? transport.deviceTypes.OnOffOutlet : transport.deviceTypes.ElectricalSensor,
             { electricalPowerMeasurement: { activePower: null }, ...(outlet ? { onOff: { onOff: true } } : {}) },
             outlet ? { onOff: { on: readOnly, off: readOnly, toggle: readOnly } } : undefined);
         }
@@ -155,10 +156,10 @@ class PowerwallMeters {
         handlers = { onOff: { on: readOnly, off: readOnly, toggle: readOnly } };
       }
       this.accessory(this.meterKey(channel), LABELS[channel],
-        outlet ? matter.deviceTypes.OnOffOutlet : matter.deviceTypes.ElectricalSensor, clusters, handlers);
+        outlet ? transport.deviceTypes.OnOffOutlet : transport.deviceTypes.ElectricalSensor, clusters, handlers);
     }
     if (this.config.batteryStatus !== false) {
-      this.accessory('battery-status', 'Low Battery Warning', matter.deviceTypes.ContactSensor, {
+      this.accessory('battery-status', 'Low Battery Warning', transport.deviceTypes.ContactSensor, {
         booleanState: { stateValue: true },
         powerSource: { status: 1, order: 0, endpointList: [], batPercentRemaining: null,
           batChargeLevel: 0, batReplacementNeeded: false, batFunctionalWhileCharging: true,
@@ -169,17 +170,17 @@ class PowerwallMeters {
     if (this.config.thresholdSensors !== false) {
       for (const value of this.thresholdValues) for (const direction of ['below', 'above']) {
         this.accessory(`soc-${direction}-${value}`, `${direction === 'below' ? 'Below' : 'Above'} ${thresholdValue(value, direction)} Percent Battery`,
-          matter.deviceTypes.ContactSensor, { booleanState: { stateValue: true } });
+          transport.deviceTypes.ContactSensor, { booleanState: { stateValue: true } });
       }
     }
     for (const [enabled, key, label] of [
       [this.config.belowReserveSensor, 'below-reserve', 'Below Backup Reserve'],
       [this.config.gridStatusSensor, 'grid-disconnected', 'Grid Disconnected'],
-    ]) if (enabled) this.accessory(key, label, matter.deviceTypes.ContactSensor, { booleanState: { stateValue: true } });
+    ]) if (enabled) this.accessory(key, label, transport.deviceTypes.ContactSensor, { booleanState: { stateValue: true } });
     const choice = (key, label, action, value, momentary = false) => {
       if (!this.client.token) throw new Error('Enabled controls require controlTokenEnv or controlTokenFile');
       this.choices.push({ key, action, value, momentary });
-      this.accessory(key, label, matter.deviceTypes.OnOffOutlet, { onOff: { onOff: false } }, {
+      this.accessory(key, label, transport.deviceTypes.OnOffOutlet, { onOff: { onOff: false } }, {
         onOff: { on: () => this.setChoice(key, true), off: () => this.setChoice(key, false), toggle: () => this.setChoice(key) },
       });
     };
@@ -207,7 +208,7 @@ class PowerwallMeters {
     ]) {
       if (!enabled) continue;
       if (!this.client.token) throw new Error('Enabled controls require controlTokenEnv or controlTokenFile');
-      this.accessory(key, label, matter.deviceTypes.OnOffOutlet, { onOff: { onOff: false } }, {
+      this.accessory(key, label, transport.deviceTypes.OnOffOutlet, { onOff: { onOff: false } }, {
         onOff: {
           on: () => this.setControl(key, action, true),
           off: () => this.setControl(key, action, false),
@@ -218,11 +219,10 @@ class PowerwallMeters {
     const desired = [...this.accessories.values()];
     const ids = new Set(desired.map(accessory => accessory.UUID));
     const removed = [...this.cached.values()].filter(accessory => !ids.has(accessory.UUID));
-    if (removed.length) await matter.unregisterPlatformAccessories(PLUGIN, PLATFORM, removed);
-    if (desired.length) await matter.registerPlatformAccessories(PLUGIN, PLATFORM, desired);
+    if (removed.length) await transport.unregisterPlatformAccessories(PLUGIN, PLATFORM, removed);
+    if (desired.length) await transport.registerPlatformAccessories(PLUGIN, PLATFORM, desired);
     for (const [key, accessory] of this.accessories) {
-      // Restoring an endpoint preserves its old nodeLabel. Explicitly publish
-      // accessory label changes without changing UUIDs or commissioning data.
+      // Publish label changes without changing the stable accessory UUID.
       await this.update(key, 'bridgedDeviceBasicInformation', { nodeLabel: accessory.displayName });
       if (key === this.meterKey('load') && this.outlets.has('load')) {
         await this.update(key, 'onOff', { onOff: true });
@@ -237,7 +237,7 @@ class PowerwallMeters {
 
   async update(key, cluster, state) {
     const accessory = this.accessories.get(key);
-    await this.api.matter.updateAccessoryState(accessory.UUID, cluster, state);
+    await this.transport.updateAccessoryState(accessory.UUID, cluster, state);
   }
 
   async reachable(key, reachable) {
@@ -318,7 +318,7 @@ class PowerwallMeters {
         await this.update('battery-status', 'powerSource', {
           batPercentRemaining: Math.round(soc * 2), batChargeLevel: low ? 1 : 0, batChargeState,
         });
-        // Matter contact semantics: false=open, true=closed. Low opens the contact.
+        // Internal boolean semantics: false=open, true=closed. The HAP adapter inverts to ContactSensorState.
         await this.update('battery-status', 'booleanState', { stateValue: !low });
       }, () => this.update('battery-status', 'powerSource', { batPercentRemaining: null, batChargeState: 0 }));
     }
@@ -365,17 +365,16 @@ class PowerwallMeters {
   }
 
   refreshSoon() {
-    // OnOff handlers run inside Matter's cluster lock. Refresh only after the
-    // command returns, otherwise updating that same cluster would deadlock.
+    // Reconcile after the command response so HAP write completion cannot
+    // overwrite a refreshed state (including momentary control switches).
     clearTimeout(this.refreshTimer);
     this.refreshTimer = setTimeout(() => this.serialize(() => this.stopped ? undefined : this.poll()).catch(() => {}), 250);
     this.refreshTimer.unref?.();
   }
 
   command(task) {
-    // A Matter command already owns its OnOff lock. Never wait for a poll
-    // that may be updating that cluster. Commands serialize with each other;
-    // polls have a separate queue and reconcile again after each command.
+    // Serialize commands independently of telemetry so a slow poll cannot
+    // block a control response. Reconcile telemetry again after each command.
     const next = this.commandQueue.then(task);
     this.commandQueue = next.catch(() => {});
     return next;
