@@ -1,6 +1,6 @@
 {
   "name": "homebridge-powerwall-meters",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Powerwall meters, battery status and controls over HomeKit HAP using pypowerwall",
   "main": "src/index.js",
   "license": "MIT",

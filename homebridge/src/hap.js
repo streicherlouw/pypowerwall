@@ -20,11 +20,13 @@ class HapTransport {
     this.custom = {};
     for (const [key, name, unit, minimum] of [
       ['power', 'Power', 'W', -1000000000],
+      ['evePower', 'Current Consumption', 'W', -1000000000],
       ['imported', 'Imported Energy', 'kWh', 0],
       ['exported', 'Exported Energy', 'kWh', 0],
     ]) {
       const { Characteristic, uuid, Formats, Perms } = this.hap;
-      const id = uuid.generate(`homebridge-powerwall-meters:hap:${key}`);
+      const id = key === 'evePower' ? 'E863F10D-079E-48FF-8F27-9C2605A29F52'
+        : uuid.generate(`homebridge-powerwall-meters:hap:${key}`);
       this.custom[key] = class extends Characteristic {
         static UUID = id;
         constructor() {
@@ -65,6 +67,16 @@ class HapTransport {
     const characteristic = service.getCharacteristic(C.ConfiguredName);
     characteristic.updateValue(configured);
     characteristic.onGet(() => configured);
+    // Re-send even an unchanged value when Home reconnects: it may have kept
+    // a generic local label after onboarding despite our corrected HAP value.
+    if (characteristic._powerwallNameSubscribed) {
+      characteristic.removeListener('subscribe', characteristic._powerwallNameSubscribed);
+    }
+    characteristic._powerwallNameSubscribed = () => {
+      const timer = setTimeout(() => characteristic.sendEventNotification(configured), 100);
+      timer.unref?.();
+    };
+    characteristic.on('subscribe', characteristic._powerwallNameSubscribed);
     characteristic.onSet(value => {
       configured = generic(value) || !value.trim() ? name : value;
       accessory.context.serviceNames[key] = configured;
@@ -72,7 +84,7 @@ class HapTransport {
       // commits the submitted value after onSet, so repair/notify on the next
       // event-loop turn. Keep deliberate custom names, including across restarts.
       const timer = setTimeout(() => {
-        characteristic.updateValue(configured);
+        characteristic.sendEventNotification(configured);
         this.api.updatePlatformAccessories([accessory]);
       }, 0);
       timer.unref?.();
@@ -141,7 +153,10 @@ class HapTransport {
         services.add(primary);
       }
       if (!mainService || subtype.startsWith('meter-load-')) mainService = primary;
-      if (clusters.electricalPowerMeasurement) this.bind(entry, primary, this.custom.power, 'power');
+      if (clusters.electricalPowerMeasurement) {
+        this.bind(entry, primary, this.custom.power, 'power');
+        this.bind(entry, primary, this.custom.evePower, 'evePower');
+      }
       if (clusters.electricalEnergyMeasurement) {
         this.bind(entry, primary, this.custom.imported, 'imported');
         this.bind(entry, primary, this.custom.exported, 'exported');
@@ -206,8 +221,11 @@ class HapTransport {
     } else if (group === 'onOff') this.set(entry, 'on', state.onOff);
     else if (group === 'booleanState') this.set(entry, 'contact', state.stateValue
       ? C.ContactSensorState.CONTACT_DETECTED : C.ContactSensorState.CONTACT_NOT_DETECTED);
-    else if (group === 'electricalPowerMeasurement') this.set(entry, 'power',
-      state.activePower == null ? null : state.activePower / 1000);
+    else if (group === 'electricalPowerMeasurement') {
+      const watts = state.activePower == null ? null : state.activePower / 1000;
+      this.set(entry, 'power', watts);
+      this.set(entry, 'evePower', watts);
+    }
     else if (group === 'electricalEnergyMeasurement') {
       for (const [field, key] of [['cumulativeEnergyImported', 'imported'], ['cumulativeEnergyExported', 'exported']]) {
         this.set(entry, key, state[field]?.energy == null ? null : state[field].energy / 1000000);

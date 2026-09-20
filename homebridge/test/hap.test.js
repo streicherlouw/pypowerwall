@@ -36,6 +36,8 @@ test('real HAP services publish power, battery and threshold values without Matt
   const outlet = find(p.meterKey('load')).getService(S.Outlet);
   assert.equal(await outlet.getCharacteristic(C.On).handleGetRequest(), true);
   assert.equal(await outlet.getCharacteristic(p.transport.custom.power).handleGetRequest(), 1234.5);
+  assert.equal(p.transport.custom.evePower.UUID, 'E863F10D-079E-48FF-8F27-9C2605A29F52');
+  assert.equal(await outlet.getCharacteristic(p.transport.custom.evePower).handleGetRequest(), 1234.5);
   await assert.rejects(outlet.getCharacteristic(C.On).handleSetRequest(false));
   const battery = find('battery-status').getService(S.Battery);
   assert.equal(await battery.getCharacteristic(C.BatteryLevel).handleGetRequest(), 56);
@@ -45,6 +47,7 @@ test('real HAP services publish power, battery and threshold values without Matt
   assert.equal(await battery.getCharacteristic(C.StatusLowBattery).handleGetRequest(), 1);
   readings.load.instant_power = null; await p.poll();
   await assert.rejects(outlet.getCharacteristic(p.transport.custom.power).handleGetRequest());
+  await assert.rejects(outlet.getCharacteristic(p.transport.custom.evePower).handleGetRequest());
   assert.equal(outlet.getCharacteristic(C.StatusFault).value, 1);
   readings.load.instant_power = 0; await p.poll();
   assert.equal(await outlet.getCharacteristic(p.transport.custom.power).handleGetRequest(), 0);
@@ -134,4 +137,17 @@ test('Home generic onboarding names are repaired while custom names survive rest
   const next = await setup(); next.p.configureAccessory(restored); await next.p.start();
   assert.equal(await next.updated[0].getServiceById(S.ContactSensor, 'soc-above-50')
     .getCharacteristic(C.ConfiguredName).handleGetRequest(), 'Battery Half Full');
+});
+
+
+test('configured names emit a fresh event on subscription even if unchanged', async () => {
+  const { p, api, added } = await setup(); await p.start();
+  const name = added[0].getServiceById(api.hap.Service.ContactSensor, 'soc-above-50')
+    .getCharacteristic(api.hap.Characteristic.ConfiguredName);
+  const events = [];
+  name.on('change', event => events.push(event));
+  name.subscribe();
+  await new Promise(resolve => setTimeout(resolve, 150));
+  assert.ok(events.some(event => event.newValue === 'Above 50 Percent Battery' && event.reason === 'event'));
+  name.unsubscribe();
 });

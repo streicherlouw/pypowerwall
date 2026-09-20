@@ -1,6 +1,6 @@
 # homebridge-powerwall-meters — HAP edition
 
-Version 0.4.1 publishes **HomeKit HAP only**, using the pypowerwall HTTP proxy.
+Version 0.4.2 publishes **HomeKit HAP only**, using the pypowerwall HTTP proxy.
 It does not register Matter endpoints or require Matter to be enabled. The previous
 Matter version is preserved on branch `codex/powerwall-matter-0.2.13`.
 
@@ -8,7 +8,7 @@ Matter version is preserved on branch `codex/powerwall-matter-0.2.13`.
 
 Requires Homebridge 2.4+, Node 22/24/26, and proxy t102 for the optional controls.
 Build with `npm ci --ignore-scripts`, `npm test`, and `npm pack` in this directory.
-Install the resulting `homebridge-powerwall-meters-0.4.1.tgz` in your Homebridge
+Install the resulting `homebridge-powerwall-meters-0.4.2.tgz` in your Homebridge
 plugin installation directory. This package is not published to npm.
 
 Keep the existing `PowerwallMeters` platform configuration and `siteId`. Disable
@@ -124,3 +124,10 @@ such as Contact Sensor 12 after the write completes, publishes the descriptive
 name on reads, and preserves deliberate custom names across restarts. This cannot
 control the text Apple initially chooses in its pairing wizard. Complete setup
 and reopen Home to check the final names; do not reset pairing just for names.
+
+Version 0.4.2 also sends an explicit ConfiguredName event when a controller
+subscribes, to help refresh labels retained by Home. A controller-local alias
+may still require editing in Home. Live watts are additionally published using
+the established Eve Current Consumption UUID E863F10D-079E-48FF-8F27-9C2605A29F52
+for compatible HAP clients. This is a vendor characteristic, not standard Apple
+Home energy support; it does not provide history or guarantee a Home wattage tile.
