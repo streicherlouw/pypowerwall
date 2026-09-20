@@ -130,44 +130,33 @@ test('Accessory identity fields fit protocol limits with real UUID format and mu
   }
 });
 
-test('all 22 strict thresholds, hysteresis and unreachable recovery', async () => {
-  const { p, updates, aggregates, registered } = setup({ thresholdSensors: true, batteryStatus: false, meters: [] });
-  let percentage = 50;
+test('two configurable limits use strict comparisons, hysteresis and unavailable recovery', async () => {
+  const { p, updates, aggregates, registered } = setup({ thresholdSensors: true,
+    aboveLimitPercent: 70, belowLimitPercent: 30, batteryStatus: false, meters: [],
+    thresholdValues: [0,10,20,30,40,50,60,70,80,90,100] });
+  let percentage = 30;
   p.client.request = async path => path.includes('aggregates') ? aggregates : { percentage };
   await p.start();
-  assert.equal(registered.length, 22);
-  assert.equal(p.accessories.get('soc-above-0').displayName, 'Above 0 Percent Battery');
-  assert.equal(p.accessories.get('soc-below-0').displayName, 'Below 1 Percent Battery');
-  assert.equal(p.accessories.get('soc-above-100').displayName, 'Above 99 Percent Battery');
-  assert.equal(new Set(registered.map(a => a.displayName.replace(/[^a-z0-9 ]/gi, ''))).size, 22);
-  assert.ok(registered.every(a => /^(Above|Below) \d+ Percent Battery$/.test(a.displayName)));
-  const active = key => updates.filter(u => u.id === p.accessories.get(key).UUID && u.cluster === 'booleanState').at(-1)?.state.stateValue === false;
-  await p.poll();
-  assert.equal(active('soc-above-50'), false);
-  assert.equal(active('soc-below-50'), false);
-  assert.equal(active('soc-above-0'), true);
-  assert.equal(active('soc-below-100'), true);
-  percentage = 51; await p.poll(); assert.equal(active('soc-above-50'), true);
-  percentage = 49; await p.poll(); assert.equal(active('soc-above-50'), true);
-  percentage = 48; await p.poll(); assert.equal(active('soc-above-50'), false);
-  percentage = null; await p.poll(); assert.equal(p.faults.size, 22);
-  percentage = 0; await p.poll();
-  assert.equal(p.faults.size, 0);
-  assert.equal(active('soc-above-0'), false);
-  assert.equal(active('soc-below-0'), true);
-  percentage = 100; await p.poll();
-  assert.equal(active('soc-below-100'), false);
-  assert.equal(active('soc-above-100'), true);
-  percentage = 0; await p.poll(); assert.equal(active('soc-above-0'), false);
-  percentage = 1; await p.poll(); assert.equal(active('soc-above-0'), true);
-  assert.equal(active('soc-below-0'), true); // Clearing hysteresis retains the empty contact.
-  percentage = 3; await p.poll(); assert.equal(active('soc-below-0'), false);
-  percentage = 1; await p.poll(); assert.equal(active('soc-below-0'), false);
-  percentage = 0; await p.poll(); assert.equal(active('soc-below-0'), true);
-  percentage = 2; await p.poll(); assert.equal(active('soc-above-0'), true);
-  percentage = 0; await p.poll();
-  percentage = 99; await p.poll(); assert.equal(active('soc-above-100'), false);
-  percentage = 100; await p.poll(); assert.equal(active('soc-above-100'), true);
+  assert.deepEqual(registered.map(a => a.displayName), ['Below 30 Percent', 'Above 70 Percent']);
+  const active = direction => updates.filter(u => u.id === p.accessories.get(`soc-${direction}-limit`).UUID &&
+    u.cluster === 'booleanState').at(-1)?.state.stateValue === false;
+  await p.poll(); assert.equal(active('below'), false);
+  percentage = 29; await p.poll(); assert.equal(active('below'), true);
+  percentage = 31; await p.poll(); assert.equal(active('below'), true);
+  percentage = 32; await p.poll(); assert.equal(active('below'), false);
+  percentage = 70; await p.poll(); assert.equal(active('above'), false);
+  percentage = 71; await p.poll(); assert.equal(active('above'), true);
+  percentage = 69; await p.poll(); assert.equal(active('above'), true);
+  percentage = 68; await p.poll(); assert.equal(active('above'), false);
+  percentage = null; await p.poll(); assert.equal(p.faults.size, 2);
+  percentage = 100; await p.poll(); assert.equal(p.faults.size, 0);
+  assert.equal(active('above'), true);
+});
+
+test('limit settings reject invalid values', () => {
+  for (const key of ['aboveLimitPercent', 'belowLimitPercent']) {
+    for (const value of [-1, 101, '50', NaN, Infinity]) assert.throws(() => setup({ [key]: value }), /Invalid/);
+  }
 });
 
 test('every threshold treats equality strictly on first observation and clears at endpoints', () => {
@@ -199,12 +188,12 @@ test('directional profile splits signs without raw duplicates or fabricated coun
 
 test('choice controls confirm state, reject deselection, honor authority and never write on polling', async () => {
   const { p, registered, updates } = setup({ energyExportSwitches: true, operationalModeSwitches: true,
-    backupReservePresets: [0, 20, 100], scheduledBackupSwitch: true, advancedGridControls: true, controlAuthority: 'homebridge' });
+    backupReservePresets: [0, 20, 100], advancedGridControls: true, controlAuthority: 'homebridge' });
   p.client.token = 'test';
-  const state = { supported: true, controls_enabled: true, grid_export: 'pv_only', mode: 'self_consumption', reserve: 20, manual_backup: false };
+  const state = { supported: true, controls_enabled: true, grid_export: 'pv_only', mode: 'self_consumption', reserve: 20 };
   const writes = [];
   p.client.readState = async () => state;
-  p.client.writeSetting = async (action, value) => { writes.push([action, value]); state[action] = action === 'manual_backup' ? value !== false : value; };
+  p.client.writeSetting = async (action, value) => { writes.push([action, value]); state[action] = value; };
   await p.start(); await p.poll(); assert.deepEqual(writes, []);
   const handlers = key => registered.find(a => a.context.key === key).handlers.onOff;
   await assert.rejects(handlers('export-solar').off(), /Select another/);
@@ -214,9 +203,7 @@ test('choice controls confirm state, reject deselection, honor authority and nev
   const solar = p.accessories.get('export-solar');
   assert.equal(updates.filter(u => u.id === solar.UUID && u.cluster === 'onOff').at(-1).state.onOff, false);
   await handlers('reserve-0').on(); assert.equal(state.reserve, 0);
-  await handlers('scheduled-backup').on(); await handlers('scheduled-backup').off();
-  assert.deepEqual(writes.slice(-2), [['manual_backup', 7200], ['manual_backup', false]]);
-  await handlers('go-off-grid').off(); assert.equal(writes.length, 4);
+  await handlers('go-off-grid').off(); assert.equal(writes.length, 2);
   p.config.controlAuthority = 'external';
   await assert.rejects(handlers('go-off-grid').on(), /disabled in plugin configuration/);
   state.mode = null; await p.poll(); assert.ok(p.faults.has('mode-self'));
@@ -240,26 +227,22 @@ test('commands do not wait for a poll holding a pending telemetry state update',
   clearTimeout(p.refreshTimer);
 });
 
-test('reserve contact scales independently; unknown grid state is not a false outage', async () => {
-  const { p, updates } = setup({ belowReserveSensor: true, gridStatusSensor: true });
-  p.client.readState = async () => ({ reserve: 60, grid_status: 'UP' });
-  await p.start(); await p.poll();
-  const contact = key => updates.filter(u => u.id === p.accessories.get(key).UUID && u.cluster === 'booleanState').at(-1).state.stateValue;
-  assert.equal(contact('below-reserve'), false);
-  assert.equal(contact('grid-disconnected'), true);
-  p.client.readState = async () => ({ reserve: null, grid_status: null });
-  await p.poll();
-  assert.ok(p.faults.has('below-reserve'));
-  assert.ok(p.faults.has('grid-disconnected'));
+test('removed status sensors stay absent with legacy settings and are retired from cache', async () => {
+  const { p, registered, removed } = setup({ belowReserveSensor: true, gridStatusSensor: true, scheduledBackupSwitch: true });
+  p.configureMatterAccessory({ UUID: 'old-reserve', context: { key: 'below-reserve' } });
+  p.configureMatterAccessory({ UUID: 'old-grid', context: { key: 'grid-disconnected' } });
+  p.configureMatterAccessory({ UUID: 'old-backup', context: { key: 'scheduled-backup' } });
+  await p.start();
+  assert.ok(registered.every(a => !['below-reserve', 'grid-disconnected', 'scheduled-backup'].includes(a.context.key)));
+  assert.deepEqual(removed.map(a => a.UUID), ['old-reserve', 'old-grid', 'old-backup']);
 });
-
 
 test('default home consumption excludes overlapping meter clusters even with legacy selections', async () => {
   const { p, registered, updates } = setup({ meterProfile: undefined, thresholdSensors: true,
     meters: ['load', 'solar', 'site', 'battery'], outletMeters: ['load', 'solar', 'site', 'battery'],
     nativeEnergyMeters: ['solar', 'site', 'battery'] });
   await p.start();
-  assert.equal(registered.length, 24);
+  assert.equal(registered.length, 4);
   assert.deepEqual(registered.filter(a => a.clusters.electricalPowerMeasurement).map(a => a.context.key), ['meter-load-outlet']);
   assert.equal(registered.filter(a => a.clusters.electricalEnergyMeasurement).length, 0);
   await p.poll();

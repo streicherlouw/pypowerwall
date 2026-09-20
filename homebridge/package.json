@@ -1,7 +1,7 @@
 {
   "name": "homebridge-powerwall-meters",
-  "version": "0.5.0",
-  "description": "Grouped Powerwall Matter accessory with energy, battery sensors and controls",
+  "version": "0.6.3",
+  "description": "Powerwall Matter meters, configurable battery limit sensors and controls",
   "main": "src/index.js",
   "license": "MIT",
   "keywords": [
@@ -23,7 +23,8 @@
     "config.schema.json",
     "README.md",
     "docs",
-    "LICENSE"
+    "LICENSE",
+    "RELEASE.md"
   ],
   "devDependencies": {
     "homebridge": "2.4.0"

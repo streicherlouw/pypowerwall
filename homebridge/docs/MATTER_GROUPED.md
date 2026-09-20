@@ -1,3 +1,6 @@
+> Historical v0.5.0 notes. v0.6.0 replaces composition with individually named
+> Matter accessories and two configurable battery limit contacts. See README.md.
+
 # Grouped Matter v0.5.0
 
 HAP v0.4.2 is saved at commit 03d42a7 on codex/powerwall-hap-only.

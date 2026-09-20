@@ -28,51 +28,50 @@ async function setup(options = {}) {
   return { p, api, groups, updates, removed, hapRemoved, setSoc: v => { soc = v; } };
 }
 
-test('one Matter group exposes native load at root and routes child battery and contacts', async () => {
+test('separate Matter endpoints carry pairing names and native load only once', async () => {
   const { p, groups, updates, setSoc } = await setup();
   await p.start(); await p.poll();
-  assert.equal(groups.length, 1);
-  const group = groups[0];
-  assert.equal(group.parts.length, 23);
-  assert.ok(group.clusters.electricalPowerMeasurement);
-  assert.equal(group.parts.filter(p => p.clusters.electricalPowerMeasurement).length, 0);
-  assert.equal(new Set(group.parts.map(p => p.id)).size, 23);
-  assert.ok(updates.some(u => u.id === group.UUID && !u.partId && u.state.activePower === 500000));
-  assert.ok(updates.some(u => u.partId === 'battery-status' && u.state.batPercentRemaining === 110));
-  assert.ok(updates.some(u => u.partId === 'soc-above-50' && u.state.stateValue === false));
-  assert.equal(updates.filter(u => u.state.reachable !== undefined).at(-1).state.reachable, true);
-  setSoc(null); await p.poll();
-  assert.equal(updates.filter(u => u.state.reachable !== undefined).at(-1).state.reachable, false);
-  setSoc(0); await p.poll();
-  assert.equal(updates.filter(u => u.state.reachable !== undefined).at(-1).state.reachable, true);
-  assert.ok(updates.some(u => u.partId === 'soc-below-0' && u.state.stateValue === false));
-  assert.ok(updates.every(u => u.cluster !== 'bridgedDeviceBasicInformation' || !u.partId));
+  assert.equal(groups.length, 4);
+  assert.ok(groups.every(a => !a.parts));
+  assert.equal(groups.filter(a => a.clusters.electricalPowerMeasurement).length, 1);
+  const above = groups.find(a => a.context.key === 'soc-above-limit');
+  const below = groups.find(a => a.context.key === 'soc-below-limit');
+  assert.equal(above.displayName, 'Above 90 Percent');
+  assert.equal(below.displayName, 'Below 70 Percent');
   const { AccessoryManager } = await import('../node_modules/homebridge/dist/matter/server/AccessoryManager.js');
   const manager = new AccessoryManager();
-  const prepared = await manager.prepareDeviceType(group);
-  assert.ok(prepared.deviceType.behaviors.electricalPowerMeasurement);
-  for (const part of group.parts) {
-    const result = await manager.prepareDeviceType(manager.partAsAccessory(part, `${group.UUID}-part-${part.id}`));
-    assert.ok(result.deviceType.behaviors.booleanState);
-    if (part.id === 'battery-status') assert.ok(result.deviceType.behaviors.powerSource);
+  for (const accessory of [above, below]) {
+    const options = manager.createEndpointOptions(accessory, { externalAccessory: false });
+    assert.equal(options.bridgedDeviceBasicInformation.nodeLabel, accessory.displayName);
+    const prepared = await manager.prepareDeviceType(accessory);
+    assert.ok(prepared.deviceType.behaviors.booleanState);
   }
+  assert.deepEqual(p.limits, { above: 90, below: 70 });
+  setSoc(0); await p.poll();
+  assert.ok(updates.some(u => u.id === below.UUID && u.state.stateValue === false));
+  setSoc(100); await p.poll();
+  assert.ok(updates.some(u => u.id === above.UUID && u.state.stateValue === false));
+  setSoc(75); await p.poll();
+  for (const accessory of [above, below]) {
+    assert.equal(updates.filter(u => u.id === accessory.UUID && u.cluster === 'booleanState').at(-1).state.stateValue, true);
+  }
+  assert.ok(updates.every(u => u.partId === undefined));
 });
 
-test('Matter restore preserves group ID, adds stable parts and retires HAP without clearing new routes', async () => {
-  const first = await setup({ thresholdValues: [50] }); await first.p.start();
-  const next = await setup({ thresholdValues: [10,50] });
-  next.p.configureMatterAccessory(first.groups[0]);
-  next.p.configureMatterAccessory({ UUID: 'old-matter' });
+test('migration retires composed group and old thresholds; limit changes preserve identity', async () => {
+  const first = await setup(); await first.p.start();
+  const next = await setup({ aboveLimitPercent: 80, belowLimitPercent: 20 });
+  for (const a of first.groups) next.p.configureMatterAccessory(a);
+  next.p.configureMatterAccessory({ UUID: 'old-group', parts: [] });
+  next.p.configureMatterAccessory({ UUID: 'old-threshold' });
   next.p.configureAccessory({ UUID: 'old-hap' });
   await next.p.start(); await next.p.poll();
-  assert.equal(next.groups[0].UUID, first.groups[0].UUID);
-  assert.deepEqual(next.groups[0].parts.slice(0,3).map(p => p.id), first.groups[0].parts.map(p => p.id));
-  assert.deepEqual(next.removed.map(a => a.UUID), ['old-matter']);
+  assert.deepEqual(next.groups.map(a => a.UUID), first.groups.map(a => a.UUID));
+  assert.deepEqual(next.removed.map(a => a.UUID), ['old-group', 'old-threshold']);
   assert.deepEqual(next.hapRemoved.map(a => a.UUID), ['old-hap']);
-  assert.ok(next.updates.some(u => u.partId === 'soc-above-10'));
 });
 
-test('grouped Matter controls preserve confirmed control handlers and read-only load', async () => {
+test('Matter controls preserve confirmed handlers and read-only load', async () => {
   process.env.MATTER_TEST_TOKEN = 'test';
   const { p, groups } = await setup({ controlTokenEnv: 'MATTER_TEST_TOKEN', controlAuthority: 'homebridge',
     operationalModeSwitches: true });
@@ -81,9 +80,8 @@ test('grouped Matter controls preserve confirmed control handlers and read-only 
   p.client.readState = async () => ({ supported: true, controls_enabled: true, mode });
   p.client.writeSetting = async (action, value) => { writes.push([action, value]); mode = value; };
   await p.start(); await p.poll();
-  assert.throws(groups[0].handlers.onOff.off, /Read-only/);
-  const part = groups[0].parts.find(p => p.id === 'mode-savings');
-  await part.handlers.onOff.on();
+  assert.throws(groups.find(a => a.context.key === 'meter-load-outlet').handlers.onOff.off, /Read-only/);
+  await groups.find(a => a.context.key === 'mode-savings').handlers.onOff.on();
   assert.deepEqual(writes, [['mode', 'autonomous']]);
   clearTimeout(p.refreshTimer);
 });

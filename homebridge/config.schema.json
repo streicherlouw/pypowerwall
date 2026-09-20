@@ -158,45 +158,12 @@
         "title": "Battery threshold contacts",
         "default": true
       },
-      "thresholdValues": {
-        "type": "array",
-        "title": "Above and below thresholds (%)",
-        "uniqueItems": true,
-        "items": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 100
-        },
-        "default": [
-          0,
-          10,
-          20,
-          30,
-          40,
-          50,
-          60,
-          70,
-          80,
-          90,
-          100
-        ]
-      },
       "thresholdHysteresis": {
         "type": "number",
         "title": "Threshold clearing hysteresis (percentage points)",
         "minimum": 0,
         "maximum": 10,
         "default": 2
-      },
-      "belowReserveSensor": {
-        "type": "boolean",
-        "title": "Below Backup Reserve contact",
-        "default": false
-      },
-      "gridStatusSensor": {
-        "type": "boolean",
-        "title": "Grid Disconnected contact",
-        "default": false
       },
       "energyExportSwitches": {
         "type": "boolean",
@@ -234,23 +201,11 @@
         },
         "default": []
       },
-      "scheduledBackupSwitch": {
-        "type": "boolean",
-        "title": "Scheduled Backup control",
-        "default": false
-      },
-      "scheduledBackupHours": {
-        "type": "number",
-        "title": "Scheduled Backup duration (hours)",
-        "minimum": 1,
-        "maximum": 24,
-        "default": 2
-      },
       "advancedGridControls": {
         "type": "boolean",
         "title": "Advanced: Go Off-Grid / Reconnect to Grid actions",
         "default": false,
-        "description": "Physically operates the grid contactor. Command switches reset automatically; use Grid Disconnected to observe actual status."
+        "description": "Physically operates the grid contactor. Command switches reset automatically; confirm actual grid status in the Tesla app."
       },
       "controlAuthority": {
         "type": "string",
@@ -266,6 +221,22 @@
         "type": "string",
         "title": "Private control token file",
         "description": "Absolute path to a 0600 file containing the same secret as the proxy. Alternative to controlTokenEnv; do not enter the secret itself."
+      },
+      "aboveLimitPercent": {
+        "type": "number",
+        "title": "Above limit \u2014 battery percent",
+        "minimum": 0,
+        "maximum": 100,
+        "default": 90,
+        "description": "Strict comparison; change this limit here and restart Homebridge. Accessory name reflects the limit; identity stays unchanged."
+      },
+      "belowLimitPercent": {
+        "type": "number",
+        "title": "Below limit \u2014 battery percent",
+        "minimum": 0,
+        "maximum": 100,
+        "default": 70,
+        "description": "Strict comparison; change this limit here and restart Homebridge. Accessory name reflects the limit; identity stays unchanged."
       }
     }
   }

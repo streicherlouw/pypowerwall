@@ -63,8 +63,7 @@ class ProxyClient {
     if (body.accepted !== true) throw new Error('Powerwall command was not acknowledged');
     if (momentary) return; // Acknowledgement is not proof that the grid contactor moved.
     const state = await this.readState();
-    const expected = action === 'manual_backup' ? value !== false : value;
-    const confirmed = action === 'reserve' ? typeof state.reserve === 'number' && Math.abs(state.reserve - value) < 0.01 : state[action] === expected;
+    const confirmed = action === 'reserve' ? typeof state.reserve === 'number' && Math.abs(state.reserve - value) < 0.01 : state[action] === value;
     if (!confirmed) throw new Error('Powerwall readback has not confirmed the change');
   }
 

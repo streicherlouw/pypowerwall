@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Powerwall meter and policy platform for grouped Homebridge Matter.
+ * Powerwall meter and policy platform for Homebridge Matter.
  * Author: Jason A. Cox
  * https://github.com/jasonacox/pypowerwall
  * Features: raw meter reporting, battery status, opt-in policy controls.
@@ -12,7 +12,6 @@ const { ProxyClient } = require('./client');
 const { CHANNELS, LABELS, finite, meterReading, energyReading, stateOfCharge } = require('./meters');
 const PLUGIN = 'homebridge-powerwall-meters';
 const PLATFORM = 'PowerwallMeters';
-const THRESHOLDS = Array.from({ length: 11 }, (_, i) => i * 10);
 const DIRECTIONS = { site: [['grid-import', 'Grid Import', 1], ['grid-export', 'Grid Export', -1]],
   battery: [['battery-charge', 'Battery Charging', -1], ['battery-discharge', 'Battery Discharging', 1]] };
 
@@ -23,13 +22,6 @@ function thresholdActive(soc, value, direction, previous, hysteresis) {
   return previous ? soc < Math.min(100, value + hysteresis) : soc < value;
 }
 
-
-// Keep the original keys/UUIDs while making the empty/full endpoint contacts useful.
-function thresholdValue(value, direction) {
-  if (direction === 'below' && value === 0) return 1;
-  if (direction === 'above' && value === 100) return 99;
-  return value;
-}
 
 function accessoryLabel(value) {
   let label = '';
@@ -43,13 +35,14 @@ function accessoryLabel(value) {
 function validate(config) {
   if (!config.siteId || typeof config.siteId !== 'string') throw new Error('A stable siteId is required');
   if (typeof config.proxyUrl !== 'string') throw new Error('proxyUrl is required');
-  for (const name of ['batteryStatus', 'allowBatteryExportSwitch', 'gridChargingSwitch', 'requireMeterTimestamp', 'thresholdSensors', 'belowReserveSensor', 'gridStatusSensor',
-    'energyExportSwitches', 'noExportSwitch', 'operationalModeSwitches', 'advancedGridControls', 'scheduledBackupSwitch']) {
+  for (const name of ['batteryStatus', 'allowBatteryExportSwitch', 'gridChargingSwitch', 'requireMeterTimestamp', 'thresholdSensors',
+    'energyExportSwitches', 'noExportSwitch', 'operationalModeSwitches', 'advancedGridControls']) {
     if (config[name] !== undefined && typeof config[name] !== 'boolean') throw new Error(`Invalid ${name}`);
   }
   for (const [name, fallback, min, max] of [
     ['pollSeconds', 15, 5, 3600], ['timeoutSeconds', 10, 1, 120],
-    ['thresholdHysteresis', 2, 0, 10], ['scheduledBackupHours', 2, 1, 24],
+    ['aboveLimitPercent', 90, 0, 100], ['belowLimitPercent', 70, 0, 100],
+    ['thresholdHysteresis', 2, 0, 10],
     ['staleSeconds', 90, 10, 86400], ['lowBatteryPercent', 20, 0, 100],
   ]) {
     const value = config[name] ?? fallback;
@@ -62,7 +55,7 @@ function validate(config) {
   if (config.meterProfile !== undefined && !['home-consumption', 'compact', 'directional'].includes(config.meterProfile)) throw new Error('Invalid meterProfile');
   if (config.controlAuthority !== undefined && !['external', 'homebridge'].includes(config.controlAuthority)) throw new Error('Invalid controlAuthority');
   if (config.savingsLabel !== undefined && !['Savings', 'Time-Based Control'].includes(config.savingsLabel)) throw new Error('Invalid savingsLabel');
-  for (const key of ['thresholdValues', 'backupReservePresets']) {
+  for (const key of ['backupReservePresets']) {
     if (config[key] !== undefined && (!Array.isArray(config[key]) || config[key].some(v => !Number.isInteger(v) || v < 0 || v > 100))) throw new Error(`Invalid ${key}`);
   }
   if (config.exportOffPolicy !== undefined && !['pv_only', 'never'].includes(config.exportOffPolicy)) {
@@ -91,7 +84,7 @@ class PowerwallMeters {
     this.outlets = new Set(config.outletMeters ?? ['load']);
     this.energy = new Set(config.nativeEnergyMeters ?? []);
     this.thresholdStates = new Map();
-    this.thresholdValues = [...new Set(config.thresholdValues ?? THRESHOLDS)];
+    this.limits = { above: config.aboveLimitPercent ?? 90, below: config.belowLimitPercent ?? 70 };
     this.choices = [];
     this.pollMs = (config.pollSeconds ?? 15) * 1000;
     this.staleMs = (config.staleSeconds ?? 90) * 1000;
@@ -170,15 +163,11 @@ class PowerwallMeters {
       });
     }
     if (this.config.thresholdSensors !== false) {
-      for (const value of this.thresholdValues) for (const direction of ['below', 'above']) {
-        this.accessory(`soc-${direction}-${value}`, `${direction === 'below' ? 'Below' : 'Above'} ${thresholdValue(value, direction)} Percent Battery`,
+      for (const direction of ['below', 'above']) {
+        this.accessory(`soc-${direction}-limit`, `${direction === 'below' ? 'Below' : 'Above'} ${this.limits[direction]} Percent`,
           transport.deviceTypes.ContactSensor, { booleanState: { stateValue: true } });
       }
     }
-    for (const [enabled, key, label] of [
-      [this.config.belowReserveSensor, 'below-reserve', 'Below Backup Reserve'],
-      [this.config.gridStatusSensor, 'grid-disconnected', 'Grid Disconnected'],
-    ]) if (enabled) this.accessory(key, label, transport.deviceTypes.ContactSensor, { booleanState: { stateValue: true } });
     const choice = (key, label, action, value, momentary = false) => {
       if (!this.client.token) throw new Error('Enabled controls require controlTokenEnv or controlTokenFile');
       this.choices.push({ key, action, value, momentary });
@@ -198,8 +187,6 @@ class PowerwallMeters {
     for (const value of new Set(this.config.backupReservePresets ?? [])) {
       choice(`reserve-${value}`, `${value} Percent Backup`, 'reserve', value);
     }
-    if (this.config.scheduledBackupSwitch) choice('scheduled-backup', `Scheduled Backup ${this.config.scheduledBackupHours ?? 2}h`,
-      'manual_backup', Math.round((this.config.scheduledBackupHours ?? 2) * 3600));
     if (this.config.advancedGridControls) {
       choice('go-off-grid', 'Go Off-Grid', 'go_off_grid', true, true);
       choice('reconnect-grid', 'Reconnect to Grid', 'reconnect_grid', true, true);
@@ -303,7 +290,7 @@ class PowerwallMeters {
       });
     }
     let soc;
-    if (this.config.batteryStatus !== false || this.config.thresholdSensors !== false || this.config.belowReserveSensor) {
+    if (this.config.batteryStatus !== false || this.config.thresholdSensors !== false) {
       try { soc = stateOfCharge(await this.client.request('/api/system_status/soe')); } catch { soc = undefined; }
     }
     if (this.accessories.has('battery-status')) {
@@ -325,19 +312,14 @@ class PowerwallMeters {
       }, () => this.update('battery-status', 'powerSource', { batPercentRemaining: null, batChargeState: 0 }));
     }
     if (this.config.thresholdSensors !== false) {
-      for (const value of this.thresholdValues) for (const direction of ['below', 'above']) {
-        await this.updateThreshold(`soc-${direction}-${value}`, soc, thresholdValue(value, direction), direction);
+      for (const direction of ['below', 'above']) {
+        await this.updateThreshold(`soc-${direction}-limit`, soc, this.limits[direction], direction);
       }
     }
     let state;
-    if (this.choices.length || this.config.belowReserveSensor || this.config.gridStatusSensor || this.config.gridChargingSwitch) {
+    if (this.choices.length || this.config.gridChargingSwitch) {
       try { state = await this.client.readState(); } catch { state = {}; }
     }
-    if (this.config.belowReserveSensor) await this.updateThreshold('below-reserve', soc, state?.reserve, 'below');
-    if (this.config.gridStatusSensor) await this.attempt('grid-disconnected', async () => {
-      if (!['UP', 'DOWN', 'SYNCING'].includes(state?.grid_status)) throw new Error('Unknown grid state');
-      await this.update('grid-disconnected', 'booleanState', { stateValue: state.grid_status === 'UP' });
-    });
     for (const item of this.choices) await this.attempt(item.key, async () => {
       if (!state?.supported || !state.controls_enabled || (!item.momentary && state[item.action] == null)) throw new Error('Control unavailable');
       await this.update(item.key, 'onOff', { onOff: item.momentary ? false : this.choiceOn(item, state) });
@@ -362,8 +344,7 @@ class PowerwallMeters {
   }
 
   choiceOn(item, state) {
-    return item.action === 'manual_backup' ? state.manual_backup === true :
-      item.action === 'reserve' ? Math.abs(state.reserve - item.value) < 0.01 : state[item.action] === item.value;
+    return item.action === 'reserve' ? Math.abs(state.reserve - item.value) < 0.01 : state[item.action] === item.value;
   }
 
   refreshSoon() {
@@ -392,7 +373,7 @@ class PowerwallMeters {
         if (!state.supported || !state.controls_enabled || (!item.momentary && state[item.action] == null)) throw new Error('Control unavailable');
         const current = item.momentary ? false : this.choiceOn(item, state);
         const on = desired ?? !current;
-        if (!on && current && item.action !== 'manual_backup') throw new Error('Select another option to change this setting');
+        if (!on && current) throw new Error('Select another option to change this setting');
         if (on !== current || (item.momentary && on)) {
           await this.client.writeSetting(item.action, on ? item.value : false, item.momentary);
         }

@@ -1,3 +1,7 @@
+> Historical deployment journal. For the definitive v0.6.3 installation and
+> current settings, use [DEFINITIVE_RELEASE.md](DEFINITIVE_RELEASE.md). Earlier
+> transport, control ownership and accessory descriptions below are superseded.
+
 # homescreen.local deployment
 
 Installed 19 September 2026 for the `pi` account.

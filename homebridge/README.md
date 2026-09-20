@@ -1,32 +1,30 @@
 # homebridge-powerwall-meters
 
-Grouped Homebridge Matter plugin using the existing pypowerwall HTTP proxy.
-Publishes the four **raw Powerwall meters**, battery percentage, and optional policy controls.
+Homebridge Matter plugin using the existing pypowerwall HTTP proxy.
+Exposes **home consumption** by default, battery status, two configurable battery
+limit contacts, and optional policy controls. Other raw meters are opt-in.
 No inferred solar-to-home allocation. Existing Python APIs are preserved; proxy t102 adds a separate Homebridge policy surface.
 
-**Apple Home grouping and pairing presentation require verification on the user’s device.**
+**Definitive release: v0.6.3**, tagged `homebridge-v0.6.3`.
+See [release notes](RELEASE.md) and the [current homescreen deployment](docs/DEFINITIVE_RELEASE.md).
 Read the [research and delivery plan](docs/APPLE_HOME_RESEARCH.md) before choosing meter presentation.
 
-## Installation — grouped Matter v0.5.0
+## Installation — Matter v0.6.3
 
 Requires Homebridge 2.4+, Node 22/24/26 and pypowerwall proxy t102 for controls.
 Build with `npm ci --ignore-scripts`, `npm test`, and `npm pack` in this directory.
-Install `homebridge-powerwall-meters-0.5.0.tgz` in your Homebridge plugin directory,
+Install `homebridge-powerwall-meters-0.6.3.tgz` in your Homebridge plugin directory,
 enable Matter on the main bridge, then restart. Use the welcome-screen Matter QR.
-The plugin publishes no HAP accessories. It retires its previous HAP accessories
-when the grouped Matter registration is submitted; bridge pairing storage is kept.
+The plugin publishes no HAP accessories. It registers individually named Matter
+accessories, then retires its old composed group and legacy threshold accessories.
+Bridge pairing storage is kept. Apple Home can require room assignment for each
+accessory again; the group layout and its automations do not transfer automatically.
 
-This version registers one composed Powerwall accessory. Home consumption is its
-root metered outlet; all other sensors and controls are child endpoints with stable
-IDs and descriptive semantic labels. Only load publishes electrical measurement
-in the default profile. This models one physical device, but Apple Home controls
-room prompts, child naming and tiles; verify the result on your controller.
-Matter does not share HAP's ConfiguredName characteristic or name-repair mechanism.
-
-All child endpoints share root reachability. Any unavailable enabled function
-marks the whole composed accessory unavailable, conservatively preventing stale
-readings from looking healthy. The battery percentage remains a native Matter
-PowerSource attribute; Homebridge UI may not render it as a battery tile.
+Each accessory supplies its own NodeLabel at pairing, rather than relying on
+semantic labels on composed children that Apple Home ignores. Only home load
+publishes electrical measurement in the default profile. Each accessory has
+independent reachability. Battery percentage remains a native Matter PowerSource
+attribute; Homebridge UI may not render it as a battery tile.
 
 Previous versions are preserved on `codex/powerwall-hap-only` (v0.4.2) and
 `codex/powerwall-matter-0.2.13`. HAP rooms/automations cannot transfer to Matter.
@@ -148,28 +146,25 @@ orientations and cannot safely be split from instantaneous power. No synthetic k
 history, energy-remaining-as-consumption, or estimated runtime is advertised to Home.
 Apple Home has no supported custom flow-diagram extension in this plugin.
 
-The battery child endpoint is named **Low Battery Warning**.
-`thresholdSensors` defaults to true and creates **22 contact sensors**: Above and
-Below each value in `thresholdValues`, default `[0,10,20,30,40,50,60,70,80,90,100]`.
-A contact **opens when its named condition becomes active**. Configure Home
-notifications and automations using "opens" for activation and "closes" for clearing.
-Comparisons are strict: 50% initially activates neither Above 50% nor Below 50%.
-`thresholdHysteresis` defaults to 2 percentage points: Above 50 activates above 50
-and clears at or below 48; Below 50 clears at or above 52. Both can remain active
-inside that band after a crossing; these are independent latched conditions.
-Set hysteresis to 0 for mutually exclusive instantaneous conditions. Reset boundaries
-are clamped to 0–100 so contacts can clear at physical endpoints. The configured
-Below 0 and Above 100 slots retain their UUIDs but use thresholds/names of
-**Below 1 Percent Battery** and **Above 99 Percent Battery**. With default hysteresis,
-the former opens below 1% (including 0%) and clears at 3%; the latter opens above
-99% (including 100%). Use Open for both empty- and full-battery automations.
-Above 0 retains its original strict above-zero behavior. Missing SOC makes every threshold unavailable;
-recovery evaluates the current value without retaining a stale latch.
+The battery status accessory is named **Low Battery Warning**.
+`thresholdSensors` defaults to true and creates exactly two battery limit contacts:
 
-Optional `belowReserveSensor` compares app-scaled charge against app-scaled Backup
-Reserve with the same hysteresis. `gridStatusSensor` exposes Grid Disconnected from
-actual grid status, never from zero watts. It does not claim that disconnection is
-an outage: intentional islanding and utility loss may look identical in this API.
+- **Above 90 Percent**: `aboveLimitPercent`, default 90; opens when charge is above the limit.
+- **Below 70 Percent**: `belowLimitPercent`, default 70; opens when charge is below the limit.
+
+Configure these independently from 0 to 100 in Homebridge plugin settings, then
+restart. Names reflect the configured limits; identities remain unchanged when limits change. The old
+`thresholdValues` array is ignored. Below Backup Reserve, Grid Disconnected, and
+Scheduled Backup have been removed from the plugin. Legacy settings cannot re-enable them.
+Limits are Homebridge configuration values, not writable controls in Apple Home.
+
+A contact **opens when its condition becomes active**. Comparisons are strict:
+charge equal to the limit does not initially activate it. `thresholdHysteresis`
+defaults to 2 percentage points and affects clearing only: Above 90 clears at 88
+or lower; Below 70 clears at 72 or higher. Set it to 0 to remove this latch. Reset
+boundaries are clamped to 0–100. Missing charge makes the contacts unavailable;
+recovery evaluates the current value without retaining a stale latch. An above
+limit of 100 or below limit of 0 can never activate because comparisons are strict.
 
 Optional controls (all off by default):
 
@@ -180,14 +175,12 @@ Optional controls (all off by default):
 | `gridChargingSwitch: true` | Grid Charging on = Yes, off = No; permission, not current activity |
 | `operationalModeSwitches: true` | Self-Powered / Savings; `savingsLabel` may be Time-Based Control |
 | `backupReservePresets: [10,20]` | 10 Percent Backup / 20 Percent Backup, configurable integer presets |
-| `scheduledBackupSwitch: true` | Scheduled Backup 2h; `scheduledBackupHours` selects 1–24 hours; off cancels |
 | `advancedGridControls: true` | Go Off-Grid / Reconnect to Grid, momentary commands that physically operate the contactor |
 
-Scheduled Backup is a manual event, not automatic weather-driven Storm Watch.
 Backup Reserve sets retained capacity, not a charging target. Choice switches reject
 turning the selected option off: select another option instead. Momentary grid
 commands reset on the next poll; acknowledgement does not prove physical completion.
-Watch Grid Disconnected for observed status. Unsupported/unknown state is unavailable,
+Confirm actual grid status in the Tesla app. Unsupported/unknown state is unavailable,
 not off. Enabling an operating-mode option is a site-owner configuration decision;
 the gateway remains responsible for accepting that mode for the installation.
 
