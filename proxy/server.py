@@ -169,7 +169,7 @@ from pypowerwall.fleetapi.exceptions import (
     PyPowerwallFleetAPIInvalidPayload,
 )
 
-BUILD = "t101"
+BUILD = "t102"
 ALLOWLIST = [
     "/api/status",
     "/api/site_info/site_name",
@@ -1339,6 +1339,79 @@ def get_transport_health():
     return transports
 
 
+def homebridge_state():
+    """Additive v1r view: unknown values stay null; no degradation-cache fallback.
+
+    Force config refresh before reading policy fields so external Tesla app writes
+    are visible. Do not change legacy /control/* failure shapes.
+    """
+    tedapi = getattr(pw, "tedapi", None)
+    if not tedapi or not getattr(tedapi, "v1r", False):
+        return {"supported": False, "controls_enabled": False}
+    config = safe_pw_call(tedapi.get_config, force=True)
+    state = {"supported": True, "controls_enabled": bool(control_secret),
+             "grid_charging": None, "grid_export": None, "mode": None, "reserve": None,
+             "manual_backup": None}
+    if isinstance(config, dict) and isinstance(config.get("site_info"), dict):
+        site = config["site_info"]
+        disallow = site.get("disallow_charge_from_grid_with_solar_installed", False)
+        if isinstance(disallow, bool):
+            state["grid_charging"] = not disallow
+        export = site.get("customer_preferred_export_rule", "battery_ok")
+        if export in ("battery_ok", "pv_only", "never"):
+            state["grid_export"] = export
+        mode = config.get("default_real_mode")
+        if mode in ("self_consumption", "autonomous", "backup"):
+            state["mode"] = mode
+        reserve = site.get("backup_reserve_percent")
+        if isinstance(reserve, (int, float)) and not isinstance(reserve, bool) and 5 <= reserve <= 100:
+            state["reserve"] = round((reserve - 5) / 0.95, 4)
+    state["grid_status"] = safe_pw_call(pw.grid_status)
+    events = safe_pw_call(tedapi.get_backup_events)
+    if isinstance(events, dict) and "manual_backup" in events:
+        event = events.get("manual_backup")
+        if event is None:
+            state["manual_backup"] = False
+        elif isinstance(event, dict) and isinstance(event.get("active"), bool):
+            state["manual_backup"] = event["active"]
+    return state
+
+
+def homebridge_control(value):
+    """Called only inside the existing authenticated POST gate. Never retry writes."""
+    try:
+        command = json.loads(value)
+    except (ValueError, TypeError):
+        return {"error": "Invalid Homebridge command"}
+    if not isinstance(command, dict):
+        return {"error": "Invalid Homebridge command"}
+    action, desired = command.get("action"), command.get("value")
+    tedapi = getattr(pw, "tedapi", None)
+    if not tedapi or not getattr(tedapi, "v1r", False):
+        return {"error": "Homebridge controls require v1r"}
+    result = None
+    if action == "grid_charging" and isinstance(desired, bool):
+        result = safe_pw_call(pw.set_grid_charging, desired)
+    elif action == "grid_export" and desired in ("battery_ok", "pv_only", "never"):
+        result = safe_pw_call(pw.set_grid_export, desired)
+    elif action == "mode" and desired in ("self_consumption", "autonomous", "backup"):
+        result = safe_pw_call(pw.set_operation, mode=desired)
+    elif action == "reserve" and type(desired) is int and 0 <= desired <= 100:
+        result = safe_pw_call(pw.set_operation, level=desired)
+    elif action == "manual_backup" and type(desired) is int and 60 <= desired <= 86400:
+        result = safe_pw_call(tedapi.schedule_max_backup, desired)
+    elif action == "manual_backup" and desired is False:
+        result = safe_pw_call(tedapi.cancel_max_backup)
+    elif action in ("go_off_grid", "reconnect_grid") and desired is True:
+        result = (safe_pw_call(pw.go_off_grid, confirm=True) if action == "go_off_grid"
+                  else safe_pw_call(pw.reconnect_grid))
+        if not isinstance(result, dict) or result.get("result") != 1:
+            return {"error": "Grid command was not acknowledged"}
+    if not result or (isinstance(result, dict) and ("error" in result or "ERROR" in result)):
+        return {"error": "Homebridge command failed or unsupported"}
+    return {"accepted": True}
+
+
 class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
     daemon_threads = True
 
@@ -1404,7 +1477,9 @@ class Handler(BaseHTTPRequestHandler):
                     else:
                         # Constant-time compare to avoid timing side channel
                         if token and hmac.compare_digest(token, control_secret):
-                            if action == "reserve":
+                            if action == "homebridge":
+                                message = json.dumps(homebridge_control(value))
+                            elif action == "reserve":
                                 # ensure value is an integer
                                 if not value:
                                     # return current reserve level in json string
@@ -1613,7 +1688,9 @@ class Handler(BaseHTTPRequestHandler):
         if new_path is not request_path:
             request_path = "/" + new_path
 
-        if request_path == "/aggregates" or request_path == "/api/meters/aggregates":
+        if request_path == "/homebridge/state":
+            message = json.dumps(homebridge_state())
+        elif request_path == "/aggregates" or request_path == "/api/meters/aggregates":
             # Meters - JSON
             def generate_aggregates():
                 # Both routes deliver same payload, use shared cache key

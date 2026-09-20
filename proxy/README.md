@@ -491,3 +491,22 @@ The script tests 27 different API routes based on real production usage patterns
 ## Release Notes
 
 Release notes are in the [RELEASE.md](https://github.com/jasonacox/pypowerwall/blob/main/proxy/RELEASE.md) file.
+
+
+### Homebridge policy surface (t102)
+
+`GET /homebridge/state` is a read-only v1r snapshot: `supported`,
+`controls_enabled`, `grid_charging`, `grid_export`, `mode`, `reserve`
+(Tesla-app percent), `manual_backup` (active boolean), and `grid_status`.
+Unknown fields are null; no graceful-degradation cache is used. Unsupported
+transports return `supported: false`. No credentials are returned.
+
+`POST /control/homebridge` uses the existing `PW_CONTROL_SECRET` gate and form
+fields `token` and `value`. Value is a JSON object with `action` and `value`.
+Actions: `grid_charging` (boolean), `grid_export` (`battery_ok`/`pv_only`/`never`),
+`mode` (`self_consumption`/`autonomous`/`backup`), `reserve` (integer 0–100 app scale),
+`manual_backup` (60–86400 seconds or false to cancel), `go_off_grid` or
+`reconnect_grid` (true). Grid actions physically operate the contactor.
+Successful writes return `{"accepted":true}`; callers must read back state.
+Failures use the existing control error envelope and status handling. No new
+environment variables are required; legacy routes remain unchanged.

@@ -1,0 +1,31 @@
+{
+  "name": "homebridge-powerwall-meters",
+  "version": "0.2.13",
+  "description": "Powerwall meters and optional controls over Homebridge Matter using pypowerwall",
+  "main": "src/index.js",
+  "license": "MIT",
+  "keywords": [
+    "homebridge-plugin",
+    "supports-matter",
+    "powerwall",
+    "energy"
+  ],
+  "engines": {
+    "node": "^22 || ^24 || ^26",
+    "homebridge": ">=2.4.0 <3"
+  },
+  "scripts": {
+    "test": "node --test",
+    "check": "node --check src/index.js && node --check src/client.js && node --check src/meters.js"
+  },
+  "files": [
+    "src",
+    "config.schema.json",
+    "README.md",
+    "docs",
+    "LICENSE"
+  ],
+  "devDependencies": {
+    "homebridge": "2.4.0"
+  }
+}

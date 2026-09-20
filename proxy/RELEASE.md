@@ -1,3 +1,9 @@
+## t102 - Homebridge policy state and controls
+
+- Add `/homebridge/state` with null-preserving v1r policy reads and app-scaled reserve.
+- Add authenticated `/control/homebridge` for policy selections, manual backup and grid actions.
+- Preserve all existing routes and failure shapes.
+
 ## pyPowerwall Proxy Release Notes
 
 ### Proxy t101 (4 Sep 2026)

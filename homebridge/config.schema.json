@@ -1,0 +1,272 @@
+{
+  "pluginAlias": "PowerwallMeters",
+  "pluginType": "platform",
+  "singular": false,
+  "schema": {
+    "type": "object",
+    "required": [
+      "siteId",
+      "proxyUrl"
+    ],
+    "properties": {
+      "name": {
+        "type": "string",
+        "title": "Name",
+        "default": "Powerwall"
+      },
+      "siteId": {
+        "type": "string",
+        "title": "Stable site identifier",
+        "description": "Choose once; changing this creates new accessories."
+      },
+      "proxyUrl": {
+        "type": "string",
+        "title": "pypowerwall proxy URL",
+        "default": "http://127.0.0.1:8675"
+      },
+      "meters": {
+        "type": "array",
+        "title": "Meters",
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "enum": [
+            "load",
+            "solar",
+            "site",
+            "battery"
+          ]
+        },
+        "default": [
+          "load",
+          "solar",
+          "site",
+          "battery"
+        ]
+      },
+      "outletMeters": {
+        "type": "array",
+        "title": "Meters presented as read-only outlets",
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "enum": [
+            "load",
+            "solar",
+            "site",
+            "battery"
+          ]
+        },
+        "default": [
+          "load"
+        ],
+        "description": "Apple Home reportedly shows watts on outlet tiles. Adding overlapping raw meters can distort its energy totals. Other meters use ElectricalSensor, whose Home UI support is unverified."
+      },
+      "nativeEnergyMeters": {
+        "type": "array",
+        "title": "Verified native energy counters",
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "enum": [
+            "load",
+            "solar",
+            "site",
+            "battery"
+          ]
+        },
+        "default": [],
+        "description": "Enable only after confirming these meters report real cumulative Wh; some backends return placeholder zeroes."
+      },
+      "batteryStatus": {
+        "type": "boolean",
+        "title": "Powerwall battery percentage and low-battery status",
+        "default": true
+      },
+      "lowBatteryPercent": {
+        "type": "number",
+        "title": "Low battery threshold (%)",
+        "minimum": 0,
+        "maximum": 100,
+        "default": 20
+      },
+      "allowBatteryExportSwitch": {
+        "type": "boolean",
+        "title": "Allow battery export control",
+        "default": false
+      },
+      "exportOffPolicy": {
+        "type": "string",
+        "title": "Policy when disabling battery export",
+        "enum": [
+          "pv_only",
+          "never"
+        ],
+        "default": "pv_only"
+      },
+      "gridChargingSwitch": {
+        "type": "boolean",
+        "title": "Grid Charging: Yes / No",
+        "default": false,
+        "description": "Permission to charge from the grid, not current charging activity. Requires proxy t102."
+      },
+      "controlTokenEnv": {
+        "type": "string",
+        "title": "Environment variable containing PW_CONTROL_SECRET",
+        "description": "Enter the variable name, not the secret. Required for enabled controls."
+      },
+      "pollSeconds": {
+        "type": "number",
+        "title": "Polling interval (seconds)",
+        "minimum": 5,
+        "maximum": 3600,
+        "default": 15
+      },
+      "timeoutSeconds": {
+        "type": "number",
+        "title": "Request timeout (seconds)",
+        "minimum": 1,
+        "maximum": 120,
+        "default": 10
+      },
+      "staleSeconds": {
+        "type": "number",
+        "title": "Maximum meter age (seconds)",
+        "minimum": 10,
+        "maximum": 86400,
+        "default": 90
+      },
+      "requireMeterTimestamp": {
+        "type": "boolean",
+        "title": "Require a meter source timestamp",
+        "default": true,
+        "description": "Disabling this loses stale-data detection when the backend omits timestamps."
+      },
+      "meterProfile": {
+        "type": "string",
+        "title": "Meter presentation",
+        "enum": [
+          "home-consumption",
+          "compact",
+          "directional"
+        ],
+        "default": "home-consumption",
+        "description": "Recommended: only Home Consumption contributes power to Apple Home. Compact and directional expose overlapping meters and will distort totals. The recommended profile overrides the meters selection."
+      },
+      "thresholdSensors": {
+        "type": "boolean",
+        "title": "Battery threshold contacts",
+        "default": true
+      },
+      "thresholdValues": {
+        "type": "array",
+        "title": "Above and below thresholds (%)",
+        "uniqueItems": true,
+        "items": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "default": [
+          0,
+          10,
+          20,
+          30,
+          40,
+          50,
+          60,
+          70,
+          80,
+          90,
+          100
+        ]
+      },
+      "thresholdHysteresis": {
+        "type": "number",
+        "title": "Threshold clearing hysteresis (percentage points)",
+        "minimum": 0,
+        "maximum": 10,
+        "default": 2
+      },
+      "belowReserveSensor": {
+        "type": "boolean",
+        "title": "Below Backup Reserve contact",
+        "default": false
+      },
+      "gridStatusSensor": {
+        "type": "boolean",
+        "title": "Grid Disconnected contact",
+        "default": false
+      },
+      "energyExportSwitches": {
+        "type": "boolean",
+        "title": "Energy Exports: Solar / Everything",
+        "default": false
+      },
+      "noExportSwitch": {
+        "type": "boolean",
+        "title": "Advanced: Energy Exports No Export",
+        "default": false,
+        "description": "Requires Energy Exports switches. This is not Tesla Permission to Export."
+      },
+      "operationalModeSwitches": {
+        "type": "boolean",
+        "title": "Operational Mode: Self-Powered / Savings",
+        "default": false
+      },
+      "savingsLabel": {
+        "type": "string",
+        "title": "Tesla app economic mode label",
+        "enum": [
+          "Savings",
+          "Time-Based Control"
+        ],
+        "default": "Savings"
+      },
+      "backupReservePresets": {
+        "type": "array",
+        "title": "Backup Reserve presets (%)",
+        "uniqueItems": true,
+        "items": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "default": []
+      },
+      "scheduledBackupSwitch": {
+        "type": "boolean",
+        "title": "Scheduled Backup control",
+        "default": false
+      },
+      "scheduledBackupHours": {
+        "type": "number",
+        "title": "Scheduled Backup duration (hours)",
+        "minimum": 1,
+        "maximum": 24,
+        "default": 2
+      },
+      "advancedGridControls": {
+        "type": "boolean",
+        "title": "Advanced: Go Off-Grid / Reconnect to Grid actions",
+        "default": false,
+        "description": "Physically operates the grid contactor. Command switches reset automatically; use Grid Disconnected to observe actual status."
+      },
+      "controlAuthority": {
+        "type": "string",
+        "title": "Enable Home control writes",
+        "enum": [
+          "external",
+          "homebridge"
+        ],
+        "default": "external",
+        "description": "homebridge enables writes; external keeps these controls read-only. Other applications may control the Powerwall concurrently."
+      },
+      "controlTokenFile": {
+        "type": "string",
+        "title": "Private control token file",
+        "description": "Absolute path to a 0600 file containing the same secret as the proxy. Alternative to controlTokenEnv; do not enter the secret itself."
+      }
+    }
+  }
+}
