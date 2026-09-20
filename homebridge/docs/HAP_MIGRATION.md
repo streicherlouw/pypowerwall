@@ -32,3 +32,19 @@ room assignment still require the user's device. Existing HAP identity preserved
 
 Validation: 28 Node tests, including actual HAP service reads, cache restoration,
 read-only meter writes and failed controls; 647 non-live Python tests passed.
+
+## Grouped HAP v0.4.0
+
+One accessory per Powerwall site contains all configured services. Home consumption
+is primary; each sensor/switch has its own stable service subtype and independent
+readings, handlers and fault status. Cached v0.3 accessories are retired when the
+grouped accessory is built. Existing bridge pairing is retained. Previous accessory
+automations must be recreated. Later service selection changes update the same
+grouped accessory, rather than adding new room-assignment targets.
+
+Verified on homescreen at 17:14 on 20 September 2026: one cached Powerwall accessory,
+36 services including AccessoryInformation (35 functional services), primaryService
+true for Home consumption. Live battery percentage and all contact/control states
+are visible in Homebridge UI. Startup completed without errors after migration.
+29 Node tests and 647 non-live Python tests passed. Apple Home's grouped setup
+presentation remains to be confirmed on the user's device.

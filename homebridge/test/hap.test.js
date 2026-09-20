@@ -30,8 +30,9 @@ test('real HAP services publish power, battery and threshold values without Matt
   const { p, api, added, readings, setSoc } = await setup();
   const C = api.hap.Characteristic, S = api.hap.Service;
   await p.start(); await p.poll();
-  assert.equal(added.length, 24);
-  const find = key => added.find(a => a.context.key === key);
+  assert.equal(added.length, 1);
+  assert.equal(added[0].services.length, 26);
+  const find = key => ({ getService: type => added[0].getServiceById(type, key) });
   const outlet = find(p.meterKey('load')).getService(S.Outlet);
   assert.equal(await outlet.getCharacteristic(C.On).handleGetRequest(), true);
   assert.equal(await outlet.getCharacteristic(p.transport.custom.power).handleGetRequest(), 1234.5);
@@ -56,13 +57,15 @@ test('HAP cache restore updates labels and services without duplicating accessor
   const first = await setup(); await first.p.start();
   const next = await setup({ thresholdSensors: false });
   for (const accessory of first.added) next.p.configureAccessory(accessory);
-  first.added.find(a => a.context.key === 'battery-status').displayName = 'Old Battery';
+  first.added[0].displayName = 'Old Powerwall';
   await next.p.start(); await next.p.poll();
   assert.equal(next.added.length, 0);
-  assert.equal(next.updated.length, 2);
-  assert.equal(next.removed.length, 22);
-  assert.equal(next.updated.find(a => a.context.key === 'battery-status').displayName, 'Low Battery Warning');
-  const outlet = next.updated.find(a => a.context.key.startsWith('meter-load'));
+  assert.equal(next.updated.length, 1);
+  assert.equal(next.removed.length, 0);
+  assert.equal(next.updated[0].services.length, 4);
+  assert.equal(next.updated[0].displayName, 'Powerwall');
+  assert.equal(next.updated[0].UUID, first.added[0].UUID);
+  const outlet = next.updated[0];
   assert.equal(outlet.services.filter(s => s.UUID === next.api.hap.Service.Outlet.UUID).length, 1);
   // Every service/characteristic must serialize using the actual HAP implementation.
   for (const accessory of next.updated) assert.ok(next.api.platformAccessory.serialize(accessory));
@@ -78,7 +81,7 @@ test('HAP control switches acknowledge writes and reject failed writes', async (
   const writes = [];
   p.client.writeSetting = async (action, value) => { writes.push([action, value]); mode = value; };
   await p.start(); await p.poll();
-  const on = added.find(a => a.context.key === 'mode-savings').getService(api.hap.Service.Switch).getCharacteristic(api.hap.Characteristic.On);
+  const on = added[0].getServiceById(api.hap.Service.Switch, 'mode-savings').getCharacteristic(api.hap.Characteristic.On);
   await on.handleSetRequest(true); await p.poll();
   assert.deepEqual(writes, [['mode', 'autonomous']]);
   assert.equal(await on.handleGetRequest(), true);
@@ -86,4 +89,31 @@ test('HAP control switches acknowledge writes and reject failed writes', async (
   p.client.writeSetting = async () => { throw new Error('Rejected'); };
   await assert.rejects(on.handleSetRequest(true));
   clearTimeout(p.refreshTimer);
+});
+
+
+test('grouping migrates separate accessories and keeps independent contact state and faults', async () => {
+  const { p, api, added, removed, readings, setSoc } = await setup();
+  for (const key of ['meter-load-outlet', 'soc-above-50']) {
+    const old = new api.platformAccessory(key, api.hap.uuid.generate(`homebridge-powerwall-meters:hap-test:${key}`));
+    old.context = { key };
+    p.configureAccessory(old);
+  }
+  await p.start(); await p.poll();
+  assert.equal(added.length, 1);
+  assert.equal(removed.length, 2);
+  const group = added[0], S = api.hap.Service, C = api.hap.Characteristic;
+  assert.equal(group.services.filter(s => s.isPrimaryService).length, 1);
+  assert.equal(group.getServiceById(S.Outlet, p.meterKey('load')).isPrimaryService, true);
+  assert.equal(group.services.filter(s => s.UUID === S.ContactSensor.UUID).length, 23);
+  const above = group.getServiceById(S.ContactSensor, 'soc-above-50').getCharacteristic(C.ContactSensorState);
+  const below = group.getServiceById(S.ContactSensor, 'soc-below-50').getCharacteristic(C.ContactSensorState);
+  assert.equal(await above.handleGetRequest(), 1);
+  assert.equal(await below.handleGetRequest(), 0);
+  readings.load.instant_power = null;
+  setSoc(40); await p.poll();
+  assert.equal(await above.handleGetRequest(), 0);
+  assert.equal(await below.handleGetRequest(), 1);
+  assert.equal(group.getServiceById(S.ContactSensor, 'soc-above-50').getCharacteristic(C.StatusFault).value, 0);
+  assert.equal(new Set(group.services.map(s => s.getServiceId())).size, group.services.length);
 });

@@ -76,7 +76,7 @@ class PowerwallMeters {
     this.log = log;
     this.config = config;
     this.api = api;
-    this.transport = transport ?? new HapTransport(api);
+    this.transport = transport ?? new HapTransport(api, config);
     this.client = new ProxyClient(config);
     this.cached = new Map();
     this.accessories = new Map();
@@ -219,7 +219,7 @@ class PowerwallMeters {
     const desired = [...this.accessories.values()];
     const ids = new Set(desired.map(accessory => accessory.UUID));
     const removed = [...this.cached.values()].filter(accessory => !ids.has(accessory.UUID));
-    if (removed.length) await transport.unregisterPlatformAccessories(PLUGIN, PLATFORM, removed);
+    if (removed.length && !transport.managesAccessoryCache) await transport.unregisterPlatformAccessories(PLUGIN, PLATFORM, removed);
     if (desired.length) await transport.registerPlatformAccessories(PLUGIN, PLATFORM, desired);
     for (const [key, accessory] of this.accessories) {
       // Publish label changes without changing the stable accessory UUID.

@@ -8,8 +8,10 @@
  */
 
 class HapTransport {
-  constructor(api) {
+  constructor(api, config) {
     this.api = api;
+    this.config = config;
+    this.managesAccessoryCache = true;
     this.hap = api.hap;
     this.cached = new Map();
     this.entries = new Map();
@@ -54,21 +56,31 @@ class HapTransport {
 
   async registerPlatformAccessories(plugin, platform, descriptors) {
     const { Service, Characteristic: C } = this.hap;
-    const added = [], updated = [];
+    const uuid = this.hap.uuid.generate(`homebridge-powerwall-meters:${this.config.siteId}:hap-group`);
+    const name = this.config.name || 'Powerwall';
+    const restored = this.cached.get(uuid);
+    const accessory = restored ?? new this.api.platformAccessory(name, uuid);
+    accessory.displayName = name;
+    accessory.context = { siteId: this.config.siteId, grouped: true };
+    const info = accessory.getService(Service.AccessoryInformation);
+    info.setCharacteristic(C.Name, name)
+      .setCharacteristic(C.Manufacturer, 'pypowerwall')
+      .setCharacteristic(C.Model, 'Powerwall proxy')
+      .setCharacteristic(C.SerialNumber, uuid.replace(/-/g, ''))
+      .setCharacteristic(C.FirmwareRevision, require('../package.json').version);
+    const allServices = new Set([info]);
+    // Clear prior primary flags and links; rebuild them from the desired services.
+    for (const service of accessory.services) {
+      service.setPrimaryService(false);
+      for (const linked of [...service.linkedServices]) service.removeLinkedService(linked);
+    }
+    this.entries.clear();
+    let mainService;
     for (const descriptor of descriptors) {
-      const restored = this.cached.get(descriptor.UUID);
-      const accessory = restored ?? new this.api.platformAccessory(descriptor.displayName, descriptor.UUID);
-      accessory.displayName = descriptor.displayName;
-      accessory.context = { ...accessory.context, ...descriptor.context };
-      const info = accessory.getService(Service.AccessoryInformation);
-      info.setCharacteristic(C.Name, descriptor.displayName)
-        .setCharacteristic(C.Manufacturer, descriptor.manufacturer)
-        .setCharacteristic(C.Model, descriptor.model)
-        .setCharacteristic(C.SerialNumber, descriptor.serialNumber)
-        .setCharacteristic(C.FirmwareRevision, require('../package.json').version);
-      const services = new Set([info]);
-      const use = (type, name, subtype) => {
-        let service = subtype ? accessory.getServiceById(type, subtype) : accessory.getService(type);
+      const services = new Set();
+      const subtype = descriptor.context.key;
+      const use = (type, name) => {
+        let service = accessory.getServiceById(type, subtype);
         if (!service) service = accessory.addService(type, name, subtype);
         service.displayName = name;
         service.setCharacteristic(C.Name, name);
@@ -99,12 +111,12 @@ class HapTransport {
         if (metered) primary.setCharacteristic(C.OutletInUse, true);
       } else {
         const meterId = this.hap.uuid.generate('homebridge-powerwall-meters:hap:meter-service');
-        primary = accessory.getServiceById(meterId, 'meter');
-        if (!primary) primary = accessory.addService(new Service(descriptor.displayName, meterId, 'meter'));
+        primary = accessory.getServiceById(meterId, subtype);
+        if (!primary) primary = accessory.addService(new Service(descriptor.displayName, meterId, subtype));
         primary.setCharacteristic(C.Name, descriptor.displayName);
         services.add(primary);
       }
-      primary.setPrimaryService(true);
+      if (!mainService || subtype.startsWith('meter-load-')) mainService = primary;
       if (clusters.electricalPowerMeasurement) this.bind(entry, primary, this.custom.power, 'power');
       if (clusters.electricalEnergyMeasurement) {
         this.bind(entry, primary, this.custom.imported, 'imported');
@@ -117,25 +129,30 @@ class HapTransport {
         this.bind(entry, battery, C.ChargingState, 'charging');
         primary.addLinkedService(battery);
       }
-      for (const service of accessory.services.slice()) {
-        if (!services.has(service)) accessory.removeService(service);
-      }
-      entry.services = [...services].filter(service => service !== info);
+      entry.services = [...services];
+      for (const service of services) allServices.add(service);
       for (const service of entry.services) {
         if (!service.testCharacteristic(C.StatusFault)) service.addOptionalCharacteristic(C.StatusFault);
         service.setCharacteristic(C.StatusFault, C.StatusFault.GENERAL_FAULT);
       }
-      if (restored) updated.push(accessory); else added.push(accessory);
     }
-    if (added.length) this.api.registerPlatformAccessories(plugin, platform, added);
-    if (updated.length) this.api.updatePlatformAccessories(updated);
+    for (const service of accessory.services.slice()) {
+      if (!allServices.has(service)) accessory.removeService(service);
+    }
+    mainService?.setPrimaryService(true);
+    // Retire the v0.3 separate accessories only after building the replacement.
+    const obsolete = [...this.cached.values()].filter(item => item.UUID !== uuid);
+    if (obsolete.length) await this.unregisterPlatformAccessories(plugin, platform, obsolete);
+    if (restored) this.api.updatePlatformAccessories([accessory]);
+    else this.api.registerPlatformAccessories(plugin, platform, [accessory]);
   }
 
   async unregisterPlatformAccessories(plugin, platform, accessories) {
     this.api.unregisterPlatformAccessories(plugin, platform, accessories);
     for (const accessory of accessories) {
       this.cached.delete(accessory.UUID);
-      this.entries.delete(accessory.UUID);
+      // Descriptor IDs may match retired v0.3 accessory UUIDs. Their new
+      // grouped service entries must remain registered.
     }
   }
 

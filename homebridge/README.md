@@ -1,6 +1,6 @@
 # homebridge-powerwall-meters — HAP edition
 
-Version 0.3.0 publishes **HomeKit HAP only**, using the pypowerwall HTTP proxy.
+Version 0.4.0 publishes **HomeKit HAP only**, using the pypowerwall HTTP proxy.
 It does not register Matter endpoints or require Matter to be enabled. The previous
 Matter version is preserved on branch `codex/powerwall-matter-0.2.13`.
 
@@ -8,7 +8,7 @@ Matter version is preserved on branch `codex/powerwall-matter-0.2.13`.
 
 Requires Homebridge 2.4+, Node 22/24/26, and proxy t102 for the optional controls.
 Build with `npm ci --ignore-scripts`, `npm test`, and `npm pack` in this directory.
-Install the resulting `homebridge-powerwall-meters-0.3.0.tgz` in your Homebridge
+Install the resulting `homebridge-powerwall-meters-0.4.0.tgz` in your Homebridge
 plugin installation directory. This package is not published to npm.
 
 Keep the existing `PowerwallMeters` platform configuration and `siteId`. Disable
@@ -20,8 +20,14 @@ A child bridge has its own pairing identity.
 HAP and Matter pairings are separate: changing protocol cannot transfer Apple Home
 rooms, names or automations. Remove the old Matter bridge from Apple Home when you
 are ready to retire it. Preserve its storage and the v0.2.13 package for rollback;
-do not reset or delete the existing HAP identity. HAP still exposes individual
-accessories and Apple Home may ask for their room assignments during setup.
+do not reset or delete the existing HAP identity. Version 0.4 groups all services into one Powerwall accessory, with Home consumption
+as its primary service. Assign this accessory to a room once; its services share
+that room. Apple Home controls their tile and automation presentation.
+
+Upgrading from v0.3 removes the separate accessories and registers the grouped
+replacement. Automations referencing those old accessories need recreating.
+The bridge pairing is preserved; no pairing reset is needed for this migration.
+Service subtypes remain stable across subsequent restarts and configuration changes.
 
 ```json
 {
