@@ -91,7 +91,7 @@ test('restore uses stable UUIDs, removes deselected accessories and restores han
   const old = setup();
   await old.p.start();
   const current = setup({ meters: ['load'], batteryStatus: false });
-  for (const accessory of old.registered) current.p.configureAccessory(accessory);
+  for (const accessory of old.registered) current.p.configureMatterAccessory(accessory);
   await current.p.start();
   assert.equal(current.registered[0].UUID, old.registered[0].UUID);
   assert.equal(current.removed.length, 4);
@@ -111,7 +111,7 @@ test('enabling native energy replaces a cached endpoint to rebuild its features'
   const old = setup({ meters: ['site'], batteryStatus: false });
   await old.p.start();
   const next = setup({ meters: ['site'], batteryStatus: false, nativeEnergyMeters: ['site'] });
-  next.p.configureAccessory(old.registered[0]);
+  next.p.configureMatterAccessory(old.registered[0]);
   await next.p.start();
   assert.notEqual(next.registered[0].UUID, old.registered[0].UUID);
   assert.equal(next.removed.length, 1);

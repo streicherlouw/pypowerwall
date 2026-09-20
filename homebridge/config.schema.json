@@ -60,7 +60,7 @@
         "default": [
           "load"
         ],
-        "description": "Standard read-only HAP outlets. Power uses a custom characteristic and may not be displayed by Apple Home."
+        "description": "Matter outlet presentation. Home consumption is the composed root; other enabled services are child endpoints."
       },
       "nativeEnergyMeters": {
         "type": "array",
@@ -76,7 +76,7 @@
           ]
         },
         "default": [],
-        "description": "Verified gateway Wh counters, exposed as custom HAP kWh characteristics. Apple Home may not display them."
+        "description": "Enable only verified gateway Wh counters; reports native Matter cumulative energy."
       },
       "batteryStatus": {
         "type": "boolean",
@@ -151,7 +151,7 @@
           "directional"
         ],
         "default": "home-consumption",
-        "description": "Home-consumption exposes only load. Compact/directional expose overlapping raw meters through custom HAP characteristics; Apple Home may not display them."
+        "description": "Home-consumption exposes only load measurement. Compact/directional expose overlapping raw meters that can distort Home energy totals."
       },
       "thresholdSensors": {
         "type": "boolean",

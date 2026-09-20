@@ -1,13 +1,13 @@
 'use strict';
 
 /**
- * Powerwall meter and policy platform for Homebridge HAP.
+ * Powerwall meter and policy platform for grouped Homebridge Matter.
  * Author: Jason A. Cox
  * https://github.com/jasonacox/pypowerwall
  * Features: raw meter reporting, battery status, opt-in policy controls.
  */
 
-const { HapTransport } = require('./hap');
+const { MatterTransport } = require('./matter');
 const { ProxyClient } = require('./client');
 const { CHANNELS, LABELS, finite, meterReading, energyReading, stateOfCharge } = require('./meters');
 const PLUGIN = 'homebridge-powerwall-meters';
@@ -76,7 +76,7 @@ class PowerwallMeters {
     this.log = log;
     this.config = config;
     this.api = api;
-    this.transport = transport ?? new HapTransport(api, config);
+    this.transport = transport ?? new MatterTransport(api, config);
     this.client = new ProxyClient(config);
     this.cached = new Map();
     this.accessories = new Map();
@@ -95,11 +95,12 @@ class PowerwallMeters {
     this.choices = [];
     this.pollMs = (config.pollSeconds ?? 15) * 1000;
     this.staleMs = (config.staleSeconds ?? 90) * 1000;
-    api.on('didFinishLaunching', () => this.start().catch(error => log.error(`Powerwall HAP startup failed: ${error.message}`)));
+    api.on('didFinishLaunching', () => this.start().catch(error => log.error(`Powerwall Matter startup failed: ${error.message}`)));
     api.on('shutdown', () => { this.stopped = true; clearTimeout(this.timer); clearTimeout(this.refreshTimer); });
   }
 
-  configureAccessory(accessory) {
+  configureAccessory(accessory) { this.transport.restoreHap?.(accessory); }
+  configureMatterAccessory(accessory) {
     this.cached.set(accessory.UUID, accessory);
     this.transport.restore?.(accessory);
   }
@@ -130,6 +131,7 @@ class PowerwallMeters {
 
   async start() {
     const transport = this.transport;
+    transport.validate?.();
     for (const channel of this.channels) {
       if (this.config.meterProfile === 'directional' && DIRECTIONS[channel]) {
         for (const [key, label] of DIRECTIONS[channel]) {
@@ -318,7 +320,7 @@ class PowerwallMeters {
         await this.update('battery-status', 'powerSource', {
           batPercentRemaining: Math.round(soc * 2), batChargeLevel: low ? 1 : 0, batChargeState,
         });
-        // Internal boolean semantics: false=open, true=closed. The HAP adapter inverts to ContactSensorState.
+        // Internal boolean semantics: false=open, true=closed. Matter reports false for open and true for closed.
         await this.update('battery-status', 'booleanState', { stateValue: !low });
       }, () => this.update('battery-status', 'powerSource', { batPercentRemaining: null, batChargeState: 0 }));
     }
