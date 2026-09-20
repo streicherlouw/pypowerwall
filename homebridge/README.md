@@ -1,6 +1,6 @@
 # homebridge-powerwall-meters — HAP edition
 
-Version 0.4.0 publishes **HomeKit HAP only**, using the pypowerwall HTTP proxy.
+Version 0.4.1 publishes **HomeKit HAP only**, using the pypowerwall HTTP proxy.
 It does not register Matter endpoints or require Matter to be enabled. The previous
 Matter version is preserved on branch `codex/powerwall-matter-0.2.13`.
 
@@ -8,7 +8,7 @@ Matter version is preserved on branch `codex/powerwall-matter-0.2.13`.
 
 Requires Homebridge 2.4+, Node 22/24/26, and proxy t102 for the optional controls.
 Build with `npm ci --ignore-scripts`, `npm test`, and `npm pack` in this directory.
-Install the resulting `homebridge-powerwall-meters-0.4.0.tgz` in your Homebridge
+Install the resulting `homebridge-powerwall-meters-0.4.1.tgz` in your Homebridge
 plugin installation directory. This package is not published to npm.
 
 Keep the existing `PowerwallMeters` platform configuration and `siteId`. Disable
@@ -115,3 +115,12 @@ hardware. `npm run check` checks syntax. Python/proxy validation from repo root:
 
 Historical Matter research and deployment notes in `docs/` describe v0.2 and are
 not claims about HAP support. See `docs/HAP_MIGRATION.md` for this installation.
+
+## Grouped sensor names in Apple Home
+
+Apple Home may show generic type names in its multi-sensor pairing wizard and
+write them back to ConfiguredName. Version 0.4.1 repairs English placeholders
+such as Contact Sensor 12 after the write completes, publishes the descriptive
+name on reads, and preserves deliberate custom names across restarts. This cannot
+control the text Apple initially chooses in its pairing wizard. Complete setup
+and reopen Home to check the final names; do not reset pairing just for names.

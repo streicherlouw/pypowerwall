@@ -117,3 +117,21 @@ test('grouping migrates separate accessories and keeps independent contact state
   assert.equal(group.getServiceById(S.ContactSensor, 'soc-above-50').getCharacteristic(C.StatusFault).value, 0);
   assert.equal(new Set(group.services.map(s => s.getServiceId())).size, group.services.length);
 });
+
+test('Home generic onboarding names are repaired while custom names survive restore', async () => {
+  const first = await setup(); await first.p.start();
+  const C = first.api.hap.Characteristic, S = first.api.hap.Service;
+  const group = first.added[0];
+  const service = group.getServiceById(S.ContactSensor, 'soc-above-50');
+  const name = service.getCharacteristic(C.ConfiguredName);
+  await name.handleSetRequest('Contact Sensor 12');
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(name.value, 'Above 50 Percent Battery');
+  assert.equal(await name.handleGetRequest(), 'Above 50 Percent Battery');
+  await name.handleSetRequest('Battery Half Full');
+  await new Promise(resolve => setTimeout(resolve, 10));
+  const restored = first.api.platformAccessory.deserialize(first.api.platformAccessory.serialize(group));
+  const next = await setup(); next.p.configureAccessory(restored); await next.p.start();
+  assert.equal(await next.updated[0].getServiceById(S.ContactSensor, 'soc-above-50')
+    .getCharacteristic(C.ConfiguredName).handleGetRequest(), 'Battery Half Full');
+});

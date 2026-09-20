@@ -54,6 +54,31 @@ class HapTransport {
     return characteristic;
   }
 
+  configureName(accessory, service, name, subtype) {
+    const C = this.hap.Characteristic;
+    const key = `${service.UUID}:${subtype}`;
+    accessory.context.serviceNames ??= {};
+    const generic = value => /^(Contact Sensor|Switch|Outlet|Battery)(?: \d+)?$/i.test(value.trim());
+    const saved = accessory.context.serviceNames[key];
+    let configured = typeof saved === 'string' && saved.trim() && !generic(saved) ? saved : name;
+    if (!service.testCharacteristic(C.ConfiguredName)) service.addOptionalCharacteristic(C.ConfiguredName);
+    const characteristic = service.getCharacteristic(C.ConfiguredName);
+    characteristic.updateValue(configured);
+    characteristic.onGet(() => configured);
+    characteristic.onSet(value => {
+      configured = generic(value) || !value.trim() ? name : value;
+      accessory.context.serviceNames[key] = configured;
+      // Home writes generic type names during multi-service onboarding. HAP
+      // commits the submitted value after onSet, so repair/notify on the next
+      // event-loop turn. Keep deliberate custom names, including across restarts.
+      const timer = setTimeout(() => {
+        characteristic.updateValue(configured);
+        this.api.updatePlatformAccessories([accessory]);
+      }, 0);
+      timer.unref?.();
+    });
+  }
+
   async registerPlatformAccessories(plugin, platform, descriptors) {
     const { Service, Characteristic: C } = this.hap;
     const uuid = this.hap.uuid.generate(`homebridge-powerwall-meters:${this.config.siteId}:hap-group`);
@@ -61,7 +86,7 @@ class HapTransport {
     const restored = this.cached.get(uuid);
     const accessory = restored ?? new this.api.platformAccessory(name, uuid);
     accessory.displayName = name;
-    accessory.context = { siteId: this.config.siteId, grouped: true };
+    accessory.context = { ...accessory.context, siteId: this.config.siteId, grouped: true };
     const info = accessory.getService(Service.AccessoryInformation);
     info.setCharacteristic(C.Name, name)
       .setCharacteristic(C.Manufacturer, 'pypowerwall')
@@ -84,8 +109,7 @@ class HapTransport {
         if (!service) service = accessory.addService(type, name, subtype);
         service.displayName = name;
         service.setCharacteristic(C.Name, name);
-        if (!service.testCharacteristic(C.ConfiguredName)) service.addOptionalCharacteristic(C.ConfiguredName);
-        service.setCharacteristic(C.ConfiguredName, name);
+        this.configureName(accessory, service, name, subtype);
         services.add(service);
         return service;
       };
