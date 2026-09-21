@@ -147,11 +147,12 @@
         "title": "Meter presentation",
         "enum": [
           "home-consumption",
+          "net-grid",
           "compact",
           "directional"
         ],
         "default": "home-consumption",
-        "description": "Home-consumption exposes only load measurement. Compact/directional expose overlapping raw meters that can distort Home energy totals."
+        "description": "Net-grid exposes load, negative solar generation and battery (positive charging/negative discharging) as three read-only outlets. Their signed sum estimates grid exchange; Apple Home negative-value totals require verification. Home-consumption exposes load only."
       },
       "thresholdSensors": {
         "type": "boolean",

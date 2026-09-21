@@ -1,22 +1,24 @@
 # Definitive Powerwall Homebridge release
 
-Version: **0.6.3**. Git tag: **homebridge-v0.6.3**.
-Validated deployment: homescreen.local, 20 September 2026.
+Version: **0.7.1**. Git tag: **homebridge-v0.7.1**.
+Validated deployment: homescreen.local, 21 September 2026.
 This document supersedes the earlier HAP and grouped Matter deployment notes.
 
 ## Final design
 
 The plugin uses the main Homebridge Matter bridge, with individually named
-accessories and no plugin HAP accessories or child bridge. Native power measurement
-is attached only to Home consumption. Separate accessory names are present at
+accessories and no plugin HAP accessories or child bridge. The selected `net-grid` profile attaches native power measurement
+to Home consumption, Solar generation and Battery. Separate accessory names are present at
 registration; there is no periodic name-refresh workaround.
 
-The installation exposes these 11 accessories:
+The installation exposes these 13 accessories:
 
 | Accessory | Behavior |
 | --- | --- |
 | Home consumption | Native load power in watts; always on, read-only |
-| Low Battery Warning | Opens at or below 20%; also carries Matter battery percentage |
+| Solar generation | Negative generation watts; always on, read-only |
+| Battery | Positive charging / negative discharge watts; native SOC and charging metadata; always on, read-only |
+| Low Battery Warning | Opens at or below 20%; contact only |
 | Below 65 Percent | Opens below 65%; clears at 67% or higher |
 | Above 90 Percent | Opens above 90%; clears at 88% or lower |
 | Export Solar Only | Selects `pv_only` export policy |
@@ -50,7 +52,7 @@ Selected settings (merge into the existing platform; preserve siteId and credent
 
 ```json
 {
-  "meterProfile": "home-consumption",
+  "meterProfile": "net-grid",
   "outletMeters": ["load"],
   "nativeEnergyMeters": [],
   "batteryStatus": true,
@@ -76,9 +78,25 @@ Tesla control writes.
 ## Pairing and operational notes
 
 Use the main Homebridge welcome-screen Matter QR code. HAP pairing does not expose
-these accessories. All Matter pairings were explicitly removed at the user's request
-before this release was documented; both the main and former child identity reported
-zero fabrics. That is a deployment snapshot, not automatic reset behavior.
+these accessories; no standalone meter or child-bridge pairing is required.
+The user confirmed all three meter tiles display watts after removing the old
+Apple Home bridge, clearing the main bridge's Matter pairing in Homebridge, and
+pairing again. Earlier upgrades displayed room totals but omitted Solar/Battery
+individual readings, even after endpoint recreation. A clean main-bridge pairing
+resolved that observed issue; the internal Apple cause is not proven.
+
+The confirmed screenshot shows Home consumption +1.40 kW, Solar generation −6.19 kW,
+Battery +13 W, and room total −4.77 kW. Values are rounded and update asynchronously.
+The signed sum estimates grid import (+) / export (−). The measured site meter is
+internal only, with debug comparison when all readings are valid. Other smart-plug
+meters can overlap whole-home load. No cumulative energy is published in `net-grid`.
+Native SOC metadata is verified in the endpoint; its Apple details UI is not
+confirmed by the wattage screenshot.
+
+Only use a clean pairing as recovery for missing readings: it affects every
+accessory on the main bridge, and rooms/automations may need to be recreated.
+Routine upgrades do not reset pairing. The package default remains the load-only
+`home-consumption` profile; `net-grid` explicitly overrides legacy meter selections.
 
 The plugin preserves pairing storage during upgrades. Remove stale Home entries
 before pairing again. Home controls room prompts and can retain user-assigned names.

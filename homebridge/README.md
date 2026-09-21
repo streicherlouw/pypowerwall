@@ -5,15 +5,16 @@ Exposes **home consumption** by default, battery status, two configurable batter
 limit contacts, and optional policy controls. Other raw meters are opt-in.
 No inferred solar-to-home allocation. Existing Python APIs are preserved; proxy t102 adds a separate Homebridge policy surface.
 
-**Definitive release: v0.6.3**, tagged `homebridge-v0.6.3`.
+**Current definitive version: v0.7.1**, tagged `homebridge-v0.7.1`.
+The opt-in signed grid-balance profile is verified in Apple Home on homescreen.
 See [release notes](RELEASE.md) and the [current homescreen deployment](docs/DEFINITIVE_RELEASE.md).
 Read the [research and delivery plan](docs/APPLE_HOME_RESEARCH.md) before choosing meter presentation.
 
-## Installation — Matter v0.6.3
+## Installation — Matter v0.7.1
 
 Requires Homebridge 2.4+, Node 22/24/26 and pypowerwall proxy t102 for controls.
 Build with `npm ci --ignore-scripts`, `npm test`, and `npm pack` in this directory.
-Install `homebridge-powerwall-meters-0.6.3.tgz` in your Homebridge plugin directory,
+Install `homebridge-powerwall-meters-0.7.1.tgz` in your Homebridge plugin directory,
 enable Matter on the main bridge, then restart. Use the welcome-screen Matter QR.
 The plugin publishes no HAP accessories. It registers individually named Matter
 accessories, then retires its old composed group and legacy threshold accessories.
@@ -170,10 +171,10 @@ Optional controls (all off by default):
 
 | Configuration | Home wording and meaning |
 |---|---|
-| `energyExportSwitches: true` | Energy Exports Solar / Everything, mutually exclusive selections |
+| `energyExportSwitches: true` | Export Solar Only / Export Battery & Solar, mutually exclusive selections |
 | `noExportSwitch: true` | Adds Energy Exports No Export (`never`), **not** Permission to Export |
 | `gridChargingSwitch: true` | Grid Charging on = Yes, off = No; permission, not current activity |
-| `operationalModeSwitches: true` | Self-Powered / Savings; `savingsLabel` may be Time-Based Control |
+| `operationalModeSwitches: true` | Self Powered Operating Mode / Savings Operating Mode; `savingsLabel` may be Time-Based Control |
 | `backupReservePresets: [10,20]` | 10 Percent Backup / 20 Percent Backup, configurable integer presets |
 | `advancedGridControls: true` | Go Off-Grid / Reconnect to Grid, momentary commands that physically operate the contactor |
 
@@ -210,7 +211,55 @@ Apple Home totals. A separately metered smart plug within this whole-home load
 can still be counted twice by Apple. Choose whole-home or individual-load reporting
 rather than assuming Apple understands parent/child meter relationships.
 
-Standalone publishing and native solar/battery role experiments are not enabled
-in production: neither has yet demonstrated correct Apple aggregation. A clean
-pairing requires removing the old Powerwall bridge in Apple Home and scanning the
-new bridge's Matter QR code; old room assignments/automations do not migrate.
+All production accessories use the main Homebridge Matter bridge. There are no
+separate meter pairing codes. See the migration notes below before resetting a pairing.
+
+## Signed grid-balance profile (v0.7.0)
+
+Set `meterProfile: "net-grid"` to expose three read-only metered outlets:
+Home consumption (+usage), Solar generation (−generation), and Battery
+(+charging, −discharging). Their signed sum estimates net grid import (+) or
+export (−). The actual site meter is read internally for comparison but never
+published in this profile. Debug logs show inferred/measured grid power and their
+difference when all four readings are valid. Timing and meter boundaries may
+produce differences; no balancing adjustment is fabricated.
+
+This profile overrides legacy meter/outlet/energy selections, disables cumulative
+energy reporting, and keeps all three outlets on. Solar/battery use new identities
+to avoid reusing historical readings with opposite signs. Battery charge status
+continues to use the original raw gateway convention. Missing readings remain
+unavailable, not zero. The prior `home-consumption` profile remains the default
+and can be selected to roll back. Other metered devices in Home still overlap
+with whole-home consumption. Individual signed wattages and room aggregation were
+observed in Apple Home on 21 September 2026; other controller versions may differ.
+
+homescreen was changed to this profile on 21 September 2026; its 65/90 percent
+contacts and existing policy controls are retained. The v0.6.3 tagged release
+remains available as the previous definitive release.
+
+In `net-grid`, native battery percentage and charging status belong to the Battery
+meter. Low Battery Warning remains a separate contact without duplicated battery
+metadata. Apple Home decides where and whether to display those attributes.
+
+### Verified Apple Home setup and upgrades (v0.7.1)
+
+After a clean pairing using the **main Homebridge welcome-screen Matter QR**, all
+three tiles displayed power: Home consumption +1.40 kW, Solar generation −6.19 kW,
+and Battery +13 W. The room showed −4.77 kW. Display rounding and asynchronous
+updates mean screenshots are not an exact same-sample balance check.
+
+During upgrades, Apple Home initially included Solar and Battery in room totals
+but omitted their individual Power rows and tile readings. Recreating just those
+endpoints did not resolve it. Removing the old bridge from Apple Home, clearing
+its Matter pairing in Homebridge, and pairing the main bridge again resolved the
+observed issue. This is consistent with stale discovery/association state; Apple's
+internal cause has not been established. Negative values themselves are supported.
+
+Use this recovery only if individual meter readings remain absent after upgrading:
+record room assignments and affected automations, remove the main Homebridge
+Matter bridge from Apple Home, reset that bridge's Matter pairing in Homebridge,
+then pair using the welcome-screen Matter QR and restore assignments/automations.
+This affects every accessory on that bridge. Normal upgrades preserve pairing and
+do not require a reset. There is no periodic name refresh or standalone meter bridge.
+Native battery percentage/charging metadata is attached to Battery, but the latest
+visual verification covers watts, not Apple's battery-details UI or energy history.

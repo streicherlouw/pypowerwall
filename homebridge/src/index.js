@@ -52,7 +52,7 @@ function validate(config) {
     if (config[key] !== undefined && (!Array.isArray(config[key]) ||
         config[key].some(channel => !CHANNELS.includes(channel)))) throw new Error(`Invalid ${key}`);
   }
-  if (config.meterProfile !== undefined && !['home-consumption', 'compact', 'directional'].includes(config.meterProfile)) throw new Error('Invalid meterProfile');
+  if (config.meterProfile !== undefined && !['home-consumption', 'net-grid', 'compact', 'directional'].includes(config.meterProfile)) throw new Error('Invalid meterProfile');
   if (config.controlAuthority !== undefined && !['external', 'homebridge'].includes(config.controlAuthority)) throw new Error('Invalid controlAuthority');
   if (config.savingsLabel !== undefined && !['Savings', 'Time-Based Control'].includes(config.savingsLabel)) throw new Error('Invalid savingsLabel');
   for (const key of ['backupReservePresets']) {
@@ -80,9 +80,11 @@ class PowerwallMeters {
     // Apple sums metered accessories without recognising overlapping boundaries.
     // The default profile must suppress extra endpoints, not just hide their tiles.
     this.profile = config.meterProfile ?? 'home-consumption';
-    this.channels = this.profile === 'home-consumption' ? ['load'] : [...new Set(config.meters ?? CHANNELS)];
-    this.outlets = new Set(config.outletMeters ?? ['load']);
-    this.energy = new Set(config.nativeEnergyMeters ?? []);
+    this.channels = this.profile === 'net-grid' ? ['load', 'solar', 'battery'] : this.profile === 'home-consumption' ? ['load'] : [...new Set(config.meters ?? CHANNELS)];
+    this.outlets = new Set(this.profile === 'net-grid' ? this.channels : config.outletMeters ?? ['load']);
+    // Net-grid publishes instantaneous power only; raw energy counter direction
+    // must not be mistaken for the reversed solar/battery power convention.
+    this.energy = new Set(this.profile === 'net-grid' ? [] : config.nativeEnergyMeters ?? []);
     this.thresholdStates = new Map();
     this.limits = { above: config.aboveLimitPercent ?? 90, below: config.belowLimitPercent ?? 70 };
     this.choices = [];
@@ -101,7 +103,7 @@ class PowerwallMeters {
   meterKey(channel) {
     // Homebridge restores an endpoint's feature set. Changing the energy
     // declaration needs a new endpoint, not just a metadata update.
-    return `meter-${channel}-${this.outlets.has(channel) ? 'outlet' : 'sensor'}${this.energy.has(channel) ? '-energy' : ''}`;
+    return `meter-${channel}-${this.outlets.has(channel) ? 'outlet' : 'sensor'}${this.energy.has(channel) ? '-energy' : ''}${this.profile === 'net-grid' && channel !== 'load' ? '-net-v2' : ''}`;
   }
 
   serialize(task) {
@@ -111,7 +113,7 @@ class PowerwallMeters {
   }
 
   accessory(key, name, deviceType, clusters, handlers) {
-    const UUID = this.api.hap.uuid.generate(`${PLUGIN}:${this.config.siteId}:${key}`);
+    const UUID = this.api.hap.uuid.generate(`${PLUGIN}:${this.config.siteId}:${key}${key === 'battery-status' && this.profile === 'net-grid' ? '-warning-only' : ''}`);
     const accessory = {
       UUID, displayName: accessoryLabel(name || 'Battery'), deviceType,
       // Keep the existing stable compact serial number across protocol versions.
@@ -161,6 +163,11 @@ class PowerwallMeters {
           batChargeState: 0, batReplaceability: 0, batPresent: true, batQuantity: 1,
           description: 'Powerwall state of charge' },
       });
+    }
+    if (this.profile === 'net-grid' && this.accessories.has('battery-status')) {
+      const warning = this.accessories.get('battery-status');
+      this.accessories.get(this.meterKey('battery')).clusters.powerSource = warning.clusters.powerSource;
+      delete warning.clusters.powerSource;
     }
     if (this.config.thresholdSensors !== false) {
       for (const direction of ['below', 'above']) {
@@ -218,7 +225,7 @@ class PowerwallMeters {
       }
       await this.reachable(key, false);
     }
-    if (this.outlets.size > 1 || [...this.outlets].some(channel => channel !== 'load')) {
+    if (this.profile !== 'net-grid' && (this.outlets.size > 1 || [...this.outlets].some(channel => channel !== 'load'))) {
       this.log.warn('Multiple/site/production meters may distort Apple Home energy totals; these are overlapping raw meters');
     }
     await this.tick();
@@ -269,10 +276,11 @@ class PowerwallMeters {
       }
       const key = this.meterKey(channel);
       // This outlet represents continuous monitoring, not a controllable load.
-      if (channel === 'load' && this.outlets.has(channel)) await this.update(key, 'onOff', { onOff: true });
+      if (this.outlets.has(channel) && (channel === 'load' || this.profile === 'net-grid')) await this.update(key, 'onOff', { onOff: true });
       await this.attempt(key, async () => {
         const power = meterReading(aggregates, channel, Date.now(), this.staleMs,
           this.config.requireMeterTimestamp !== false);
+        if (this.profile === 'net-grid' && channel !== 'load') power.activePower = -power.activePower || 0;
         await this.update(key, 'electricalPowerMeasurement', power);
         if (this.energy.has(channel) && Date.now() - (this.lastEnergy?.[channel] ?? 0) >= 60000) {
           await this.update(key, 'electricalEnergyMeasurement', energyReading(aggregates, channel));
@@ -289,11 +297,25 @@ class PowerwallMeters {
         }
       });
     }
+    if (this.profile === 'net-grid') {
+      // Compare the same aggregate snapshot without publishing a fourth meter.
+      // A missing measurement invalidates the comparison, never becomes zero.
+      this.gridBalance = null;
+      try {
+        const read = channel => meterReading(aggregates, channel, Date.now(), this.staleMs,
+          this.config.requireMeterTimestamp !== false).activePower / 1000;
+        const inferredWatts = read('load') - read('solar') - read('battery');
+        const measuredWatts = read('site');
+        this.gridBalance = { inferredWatts, measuredWatts, differenceWatts: inferredWatts - measuredWatts };
+        this.log.debug?.(`Grid balance: inferred ${inferredWatts.toFixed(1)} W; measured ${measuredWatts.toFixed(1)} W; difference ${this.gridBalance.differenceWatts.toFixed(1)} W`);
+      } catch { /* Individual meter faults are reported independently above. */ }
+    }
     let soc;
     if (this.config.batteryStatus !== false || this.config.thresholdSensors !== false) {
       try { soc = stateOfCharge(await this.client.request('/api/system_status/soe')); } catch { soc = undefined; }
     }
     if (this.accessories.has('battery-status')) {
+      const batteryInfoKey = this.profile === 'net-grid' ? this.meterKey('battery') : 'battery-status';
       await this.attempt('battery-status', async () => {
         // This proxy route is already Tesla-app-scaled. Never scale it twice.
         if (!finite(soc)) throw new Error('Battery percentage unavailable');
@@ -304,12 +326,12 @@ class PowerwallMeters {
             this.config.requireMeterTimestamp !== false).activePower;
           batChargeState = power < -50000 ? 1 : (soc === 100 ? 2 : 3);
         } catch { /* A missing battery power meter does not invalidate a valid percentage. */ }
-        await this.update('battery-status', 'powerSource', {
+        await this.update(batteryInfoKey, 'powerSource', {
           batPercentRemaining: Math.round(soc * 2), batChargeLevel: low ? 1 : 0, batChargeState,
         });
         // Internal boolean semantics: false=open, true=closed. Matter reports false for open and true for closed.
         await this.update('battery-status', 'booleanState', { stateValue: !low });
-      }, () => this.update('battery-status', 'powerSource', { batPercentRemaining: null, batChargeState: 0 }));
+      }, () => this.update(batteryInfoKey, 'powerSource', { batPercentRemaining: null, batChargeState: 0 }));
     }
     if (this.config.thresholdSensors !== false) {
       for (const direction of ['below', 'above']) {

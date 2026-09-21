@@ -85,3 +85,42 @@ test('Matter controls preserve confirmed handlers and read-only load', async () 
   assert.deepEqual(writes, [['mode', 'autonomous']]);
   clearTimeout(p.refreshTimer);
 });
+
+
+test('net-grid battery meter carries battery information, not home load or warning contact', async () => {
+  const { p, groups, updates, setSoc } = await setup({ meterProfile: 'net-grid' });
+  await p.start(); await p.poll();
+  const battery = groups.find(a => a.context.key === p.meterKey('battery'));
+  const load = groups.find(a => a.context.key === p.meterKey('load'));
+  const warning = groups.find(a => a.context.key === 'battery-status');
+  assert.ok(battery.clusters.powerSource);
+  assert.equal(load.clusters.powerSource, undefined);
+  assert.equal(warning.clusters.powerSource, undefined);
+  assert.ok(updates.some(u => u.id === battery.UUID && u.cluster === 'powerSource' && u.state.batPercentRemaining === 110 && u.state.batChargeState === 1));
+  const { AccessoryManager } = await import('../node_modules/homebridge/dist/matter/server/AccessoryManager.js');
+  const prepared = await new AccessoryManager().prepareDeviceType(battery);
+  assert.ok(prepared.deviceType.behaviors.powerSource);
+  assert.ok(prepared.deviceType.behaviors.electricalPowerMeasurement);
+  setSoc(null); await p.poll();
+  assert.equal(updates.filter(u => u.id === battery.UUID && u.cluster === 'powerSource').at(-1).state.batPercentRemaining, null);
+});
+
+
+test('fresh solar and battery identities declare utility types before registration', async () => {
+  const { p, groups, removed } = await setup({ meterProfile: 'net-grid' });
+  const oldSolar = p.api.hap.uuid.generate('homebridge-powerwall-meters:group-test:meter-solar-outlet-net');
+  const oldBattery = p.api.hap.uuid.generate('homebridge-powerwall-meters:group-test:meter-battery-outlet-net');
+  p.configureMatterAccessory({ UUID: oldSolar });
+  p.configureMatterAccessory({ UUID: oldBattery });
+  await p.start();
+  assert.deepEqual(removed.map(a => a.UUID), [oldSolar, oldBattery]);
+  const { AccessoryManager } = await import('../node_modules/homebridge/dist/matter/server/AccessoryManager.js');
+  for (const channel of ['solar', 'battery']) {
+    const a = groups.find(a => a.context.key === p.meterKey(channel));
+    assert.ok(a.context.key.endsWith('-net-v2'));
+    const options = new AccessoryManager().createEndpointOptions(a, { externalAccessory: false });
+    assert.deepEqual(options.descriptor.deviceTypeList.map(t => t.deviceType),
+      channel === 'battery' ? [0x10a, 0x510, 0x11] : [0x10a, 0x510]);
+  }
+  assert.equal(p.meterKey('load'), 'meter-load-outlet');
+});

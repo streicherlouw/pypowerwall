@@ -1,6 +1,6 @@
 {
   "name": "homebridge-powerwall-meters",
-  "version": "0.6.3",
+  "version": "0.7.1",
   "description": "Powerwall Matter meters, configurable battery limit sensors and controls",
   "main": "src/index.js",
   "license": "MIT",

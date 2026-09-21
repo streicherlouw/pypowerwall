@@ -266,3 +266,30 @@ test('home consumption stays on at startup, zero power and unavailable readings'
   }
   assert.equal(p.faults.has(p.meterKey('load')), true);
 });
+
+test('net-grid publishes three signed outlets and compares the unpublished grid meter', async () => {
+  const { p, registered, updates, aggregates } = setup({ meterProfile: 'net-grid', batteryStatus: false,
+    meters: ['site'], outletMeters: [], nativeEnergyMeters: ['load','solar','battery','site'] });
+  await p.start();
+  assert.equal(registered.length, 3);
+  assert.ok(registered.every(a => a.deviceType === 'outlet' && !a.clusters.electricalEnergyMeasurement));
+  assert.ok(registered.every(a => !a.context.key.includes('site')));
+  for (const a of registered) assert.throws(a.handlers.onOff.off, /Read-only/);
+  const power = channel => updates.filter(u => u.id === p.accessories.get(p.meterKey(channel)).UUID && u.cluster === 'electricalPowerMeasurement').at(-1).state.activePower;
+  for (const [load, solar, battery, site] of [[3000,6000,-2000,-1000],[3000,1000,1000,1000],[500,0,-2500,3000]]) {
+    Object.assign(aggregates.load, { instant_power: load });
+    Object.assign(aggregates.solar, { instant_power: solar });
+    Object.assign(aggregates.battery, { instant_power: battery });
+    Object.assign(aggregates.site, { instant_power: site });
+    await p.poll();
+    assert.equal(power('load'), load * 1000);
+    assert.equal(power('solar'), -solar * 1000 || 0);
+    assert.equal(power('battery'), -battery * 1000);
+    assert.deepEqual(p.gridBalance, { inferredWatts: site, measuredWatts: site, differenceWatts: 0 });
+  }
+  aggregates.site.instant_power = null;
+  await p.poll(); assert.equal(p.gridBalance, null); assert.equal(p.faults.size, 0);
+  aggregates.solar.instant_power = null;
+  await p.poll(); assert.equal(power('solar'), null); assert.equal(p.gridBalance, null);
+  assert.equal(power('load'), 500000);
+});

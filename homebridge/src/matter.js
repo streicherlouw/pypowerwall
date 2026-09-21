@@ -28,6 +28,20 @@ class MatterTransport {
   async registerPlatformAccessories(plugin, platform, descriptors) {
     // Each bridged endpoint has its own NodeLabel at registration. Apple Home
     // ignores semantic labels on composed children during pairing.
+    for (const accessory of descriptors) {
+      if (!accessory.context.key.endsWith('-net-v2')) continue;
+      // Homebridge normally adds utility types after attaching the endpoint.
+      // Supply them in the initial Descriptor so discovery cannot see an outlet
+      // before its metering capabilities. Keep the working load endpoint intact.
+      const types = [accessory.deviceType, this.deviceTypes.ElectricalSensor];
+      accessory.clusters.descriptor = { deviceTypeList: types.map(type => ({
+        deviceType: type.deviceType, revision: type.deviceRevision,
+      })) };
+      if (accessory.clusters.powerSource) {
+        // Matter Power Source utility device type (revision 1).
+        accessory.clusters.descriptor.deviceTypeList.push({ deviceType: 0x11, revision: 1 });
+      }
+    }
     await this.api.matter.registerPlatformAccessories(plugin, platform, descriptors);
     this.ids = new Set(descriptors.map(d => d.UUID));
     const obsolete = [...this.cached.values()].filter(a => !this.ids.has(a.UUID));
